@@ -33,7 +33,8 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
     # 복잡한 조건 처리를 위해 시도 횟수 50번 유지
     for attempt in range(50): 
         met_pairs = set()
-        person_visited_tables = {p['이름']: set() for p in people_list}
+        # [수정] 이름이 아닌 '고유ID'를 기준으로 방문 테이블 기록
+        person_visited_tables = {p['고유ID']: set() for p in people_list}
         current_all_rounds = []
         total_penalty = 0
 
@@ -52,14 +53,14 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
                     for p in unseated:
                         p_penalty = 0
                         
-                        # 1순위: 중복 만남 원천 차단 (절대 조건)
+                        # 1순위: 중복 만남 원천 차단 (절대 조건) - [수정] 동명이인 방지를 위해 고유ID 비교
                         for seated in round_tables[t_idx]:
-                            pair = tuple(sorted([p['이름'], seated['이름']]))
+                            pair = tuple(sorted([p['고유ID'], seated['고유ID']]))
                             if pair in met_pairs:
                                 p_penalty += 10000 
                                 
-                        # 1.5순위: 지박령 방지
-                        if t_idx in person_visited_tables[p['이름']]:
+                        # 1.5순위: 지박령 방지 - [수정] 고유ID 기준
+                        if t_idx in person_visited_tables[p['고유ID']]:
                             p_penalty += 8000
 
                         # 임시 착석 후 테이블 상태 확인
@@ -71,16 +72,15 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
                         sch_b_count = sum(1 for x in temp_table if x['소속학교'] == '건국대')
 
                         # =========================================================
-                        # [신규 추가] 2순위: 최소 1명 보장 및 소수 인원 쏠림 방지 
+                        # 2순위: 최소 1명 보장 및 소수 인원 쏠림 방지 
                         # =========================================================
-                        # 테이블의 마지막 자리가 채워지는 시점에 조건을 엄격히 검사
                         if size == t_size:
                             
                             # [성별 조건 검사]
                             if total_w >= num_tables and w_count == 0:
-                                p_penalty += 3000 # 여자가 충분한데 테이블에 0명이면 강력 패널티 (최소 1명 보장)
+                                p_penalty += 3000 
                             elif total_w < num_tables and w_count > 1:
-                                p_penalty += 3000 # 여자가 부족한데 한 테이블에 2명 이상 몰리면 패널티 (분산 유도, 남자 넷 테이블 자연 허용)
+                                p_penalty += 3000 
                                 
                             if total_m >= num_tables and m_count == 0:
                                 p_penalty += 3000
@@ -89,9 +89,9 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
 
                             # [학교 조건 검사]
                             if total_sch_b >= num_tables and sch_b_count == 0:
-                                p_penalty += 3000 # 건국대가 충분한데 0명이면 강력 패널티 (최소 1명 보장)
+                                p_penalty += 3000 
                             elif total_sch_b < num_tables and sch_b_count > 1:
-                                p_penalty += 3000 # 건국대가 부족한데 몰리면 패널티 (교통대 넷 테이블 자연 허용)
+                                p_penalty += 3000 
                                 
                             if total_sch_a >= num_tables and sch_a_count == 0:
                                 p_penalty += 3000
@@ -112,14 +112,14 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
                     round_tables[t_idx].append(best_person)
                     unseated.remove(best_person)
                     total_penalty += min_p
-                    person_visited_tables[best_person['이름']].add(t_idx) 
+                    person_visited_tables[best_person['고유ID']].add(t_idx) 
 
             current_all_rounds.append(round_tables)
 
             for table in round_tables:
                 for i in range(len(table)):
                     for j in range(i + 1, len(table)):
-                        pair = tuple(sorted([table[i]['이름'], table[j]['이름']]))
+                        pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
                         met_pairs.add(pair)
 
         if total_penalty < global_min_penalty:
@@ -134,21 +134,40 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
 # --- 3. 메인 화면 ---
 st.write("---")
 st.write("### 📂 참가자 명단 업로드")
-st.info("파티 개최 전, 확정된 전체 인원 명단을 올려주세요.")
-uploaded_file = st.file_uploader("엑셀 파일 선택", type=['xlsx'])
+st.info("파티 개최 전, 확정된 전체 인원 명단을 올려주세요. (.xlsx 또는 .csv 파일 모두 지원)")
+# [수정] csv 파일도 업로드 가능하도록 type 추가
+uploaded_file = st.file_uploader("엑셀/CSV 파일 선택", type=['xlsx', 'csv'])
 
 if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file)
+    # [수정] 파일 확장자에 따라 다르게 읽어오기
+    if uploaded_file.name.endswith('.csv'):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
     
     if not {'이름', '성별', '소속학교'}.issubset(df.columns):
-        st.error("⚠️ 엑셀 파일 첫 줄에 '이름', '성별', '소속학교' 가 정확히 적혀있는지 확인해주세요!")
+        st.error("⚠️ 파일 첫 줄에 '이름', '성별', '소속학교' 가 정확히 적혀있는지 확인해주세요!")
     else:
+        # ==========================================
+        # [신규 핵심 기능] 텍스트 자동 정제 및 동명이인 처리
+        # ==========================================
+        # 1. 성별 텍스트 통일 ('남성' -> '남', '여성' -> '여')
+        df['성별'] = df['성별'].astype(str).apply(lambda x: '남' if '남' in x else ('여' if '여' in x else x))
+        
+        # 2. 학교 텍스트 통일 ('한국교통대~' -> '교통대', '건국대~' -> '건국대')
+        df['소속학교'] = df['소속학교'].astype(str).apply(lambda x: '교통대' if '교통' in x else ('건국대' if '건국' in x else x))
+        
+        people_list = df.to_dict('records')
+        
+        # 3. 동명이인 구분을 위한 내부 '고유ID' 발급
+        for idx, p in enumerate(people_list):
+            p['고유ID'] = f"{p['이름']}_{idx}"
+
         st.write(f"✅ **총 참가자 수: {len(df)}명**")
         
         st.write("---")
         if st.button("🚀 전체 라운드(1~3) 자리 배치 스케줄 생성!"):
-            with st.spinner('3시간 동안 절대 겹치지 않는 최적의 동선을 계산 중입니다...'):
-                people_list = df.to_dict('records')
+            with st.spinner('실제 현장 데이터를 분석하여 최적의 동선을 계산 중입니다...'):
                 
                 # 전체 스케줄 생성 함수 실행
                 all_rounds_data = generate_full_schedule(people_list, table_count)
@@ -156,50 +175,47 @@ if uploaded_file is not None:
                 st.success("🎉 파티 전체 스케줄 배치가 완료되었습니다!")
                 
                 # ==========================================
-                # [신규 기능] 1. 운영진 확인용: 라운드별 테이블 배치도
+                # 운영진 확인용: 라운드별 테이블 배치도
                 # ==========================================
                 st.write("### 🗺️ 라운드별 테이블 배치도 (운영진용)")
                 st.info("아래 각 라운드 탭을 클릭하여 테이블별 착석 인원(이름, 성별, 학교)을 확인하세요.")
                 
-                # Streamlit의 탭 기능을 사용하여 1, 2, 3라운드를 분리
                 tabs = st.tabs([f"{r + 1}라운드" for r in range(len(all_rounds_data))])
                 
                 for r_idx, tab in enumerate(tabs):
                     with tab:
                         round_tables = all_rounds_data[r_idx]
-                        # 화면을 3단으로 나누어 표를 보기 좋게 정렬
                         cols = st.columns(3)
                         for t_idx, table in enumerate(round_tables):
                             col = cols[t_idx % 3]
                             with col:
                                 st.markdown(f"**📍 {t_idx + 1}번 테이블**")
                                 if table:
-                                    # 이름, 성별, 소속학교만 추출하여 표로 구성
                                     table_df = pd.DataFrame(table)[['이름', '성별', '소속학교']]
-                                    # 인덱스(0,1,2..) 번호를 숨겨서 더 깔끔하게 출력
                                     st.dataframe(table_df, hide_index=True, use_container_width=True)
                                 else:
                                     st.write("빈 테이블")
-                                st.write("") # 간격 띄우기
+                                st.write("") 
                 
                 st.write("---")
                 
                 # ==========================================
-                # 2. 참가자 배포용: 개인별 파티 스케줄
+                # 참가자 배포용: 개인별 파티 스케줄
                 # ==========================================
                 schedule_results = []
                 for idx, person in enumerate(people_list):
                     name = person['이름']
+                    uid = person['고유ID'] # 동명이인 추적을 위해 고유ID 사용
                     row_data = {
                         "번호": idx + 1,
-                        "이름": name,
+                        "이름": name, # 화면에는 원래 이름만 예쁘게 출력
                         "성별": person['성별'],
                         "소속학교": person['소속학교']
                     }
                     
                     for r_idx, round_tables in enumerate(all_rounds_data):
                         for t_idx, table in enumerate(round_tables):
-                            if any(p['이름'] == name for p in table):
+                            if any(p['고유ID'] == uid for p in table):
                                 row_data[f"{r_idx + 1}라운드 테이블"] = f"{t_idx + 1}번"
                                 break
                     
