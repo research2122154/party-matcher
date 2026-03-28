@@ -19,17 +19,19 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
     remainder = n % num_tables
     table_sizes = [base_size + 1 if i < remainder else base_size for i in range(num_tables)]
 
-    # --- [핵심 수정] 전체 인원 대비 실제 성비/학교 비율 계산 ---
+    # --- 전체 인원 통계 정밀 계산 ---
     total_m = sum(1 for p in people_list if p['성별'] == '남')
+    total_w = sum(1 for p in people_list if p['성별'] == '여')
     total_sch_a = sum(1 for p in people_list if p['소속학교'] == '교통대')
+    total_sch_b = sum(1 for p in people_list if p['소속학교'] == '건국대')
     
-    ratio_m = total_m / n         # 전체 중 남자의 비율
-    ratio_sch_a = total_sch_a / n # 전체 중 교통대의 비율
+    ratio_m = total_m / n
+    ratio_sch_a = total_sch_a / n
 
     best_all_rounds = []
     global_min_penalty = float('inf')
 
-    # 복잡도를 해결하기 위해 시도 횟수를 50번 유지
+    # 복잡한 조건 처리를 위해 시도 횟수 50번 유지
     for attempt in range(50): 
         met_pairs = set()
         person_visited_tables = {p['이름']: set() for p in people_list}
@@ -51,27 +53,55 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
                     for p in unseated:
                         p_penalty = 0
                         
-                        # 1순위: 중복 만남 원천 차단
+                        # 1순위: 중복 만남 원천 차단 (절대 조건)
                         for seated in round_tables[t_idx]:
                             pair = tuple(sorted([p['이름'], seated['이름']]))
                             if pair in met_pairs:
                                 p_penalty += 10000 
                                 
-                        # 1.5순위: 지박령 방지 (패널티 8000점으로 강력 상향)
+                        # 1.5순위: 지박령 방지
                         if t_idx in person_visited_tables[p['이름']]:
                             p_penalty += 8000
 
-                        # 2순위: 동적 성비 및 학교 균형 패널티 (핵심 수정)
+                        # 임시 착석 후 테이블 상태 확인
                         temp_table = round_tables[t_idx] + [p]
                         size = len(temp_table)
                         m_count = sum(1 for x in temp_table if x['성별'] == '남')
+                        w_count = sum(1 for x in temp_table if x['성별'] == '여')
                         sch_a_count = sum(1 for x in temp_table if x['소속학교'] == '교통대')
+                        sch_b_count = sum(1 for x in temp_table if x['소속학교'] == '건국대')
 
-                        # 무조건 절반(size/2)이 아니라, 전체 참가자 비율에 맞춘 '현재 테이블의 이상적인 목표치' 계산
+                        # =========================================================
+                        # [신규 추가] 2순위: 최소 1명 보장 및 소수 인원 쏠림 방지 
+                        # =========================================================
+                        # 테이블의 마지막 자리가 채워지는 시점에 조건을 엄격히 검사
+                        if size == t_size:
+                            
+                            # [성별 조건 검사]
+                            if total_w >= num_tables and w_count == 0:
+                                p_penalty += 3000 # 여자가 충분한데 테이블에 0명이면 강력 패널티 (최소 1명 보장)
+                            elif total_w < num_tables and w_count > 1:
+                                p_penalty += 3000 # 여자가 부족한데 한 테이블에 2명 이상 몰리면 패널티 (분산 유도, 남자 넷 테이블 자연 허용)
+                                
+                            if total_m >= num_tables and m_count == 0:
+                                p_penalty += 3000
+                            elif total_m < num_tables and m_count > 1:
+                                p_penalty += 3000
+
+                            # [학교 조건 검사]
+                            if total_sch_b >= num_tables and sch_b_count == 0:
+                                p_penalty += 3000 # 건국대가 충분한데 0명이면 강력 패널티 (최소 1명 보장)
+                            elif total_sch_b < num_tables and sch_b_count > 1:
+                                p_penalty += 3000 # 건국대가 부족한데 몰리면 패널티 (교통대 넷 테이블 자연 허용)
+                                
+                            if total_sch_a >= num_tables and sch_a_count == 0:
+                                p_penalty += 3000
+                            elif total_sch_a < num_tables and sch_a_count > 1:
+                                p_penalty += 3000
+
+                        # 3순위: 진행 중 동적 비율 유지 (자리를 채우는 과정에서 자연스러운 분배 유도)
                         target_m = size * ratio_m
                         target_sch_a = size * ratio_sch_a
-
-                        # 목표치와의 차이만큼 패널티 부여 (유연한 분배 유도)
                         p_penalty += abs(m_count - target_m) * 15
                         p_penalty += abs(sch_a_count - target_sch_a) * 15
 
@@ -79,7 +109,7 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
                             min_p = p_penalty
                             best_person = p
 
-                    # 최적 인원 착석 및 기록
+                    # 최적 인원 착석 및 방문 기록
                     round_tables[t_idx].append(best_person)
                     unseated.remove(best_person)
                     total_penalty += min_p
@@ -87,7 +117,6 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
 
             current_all_rounds.append(round_tables)
 
-            # 만남 기록
             for table in round_tables:
                 for i in range(len(table)):
                     for j in range(i + 1, len(table)):
