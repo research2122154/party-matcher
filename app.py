@@ -70,9 +70,7 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
                         if t_idx in person_visited_tables[p['고유ID']]:
                             p_penalty += 8000
 
-                        # =========================================================
                         # [유연한 로직] 학과 정보가 존재하고 미기재가 아닐 때만 지인 차단 발동
-                        # =========================================================
                         for seated in round_tables[t_idx]:
                             if p.get('학과') and seated.get('학과'):
                                 if p['학과'] != '미기재' and p['소속학교'] == seated['소속학교'] and p['학과'] == seated['학과']:
@@ -84,7 +82,7 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
                         temp_sch_b = sum(1 for x in round_tables[t_idx] if x['소속학교'] == '건국대') + (1 if p['소속학교'] == '건국대' else 0)
                         temp_sch_a = sum(1 for x in round_tables[t_idx] if x['소속학교'] == '교통대') + (1 if p['소속학교'] == '교통대' else 0)
 
-                        # 2순위: 최대 정원 통제 및 수학적 고갈 방지 (Starvation Prevention)
+                        # 2순위: 최대 정원 통제 및 수학적 고갈 방지
                         if temp_w > max_w: p_penalty += 50000
                         if temp_m > max_m: p_penalty += 50000
                         if temp_sch_b > max_sch_b: p_penalty += 50000
@@ -154,7 +152,7 @@ if uploaded_file is not None:
     else:
         df = pd.read_excel(uploaded_file)
     
-    # [핵심 수정] 엑셀 파일 검증 시 '학과'를 필수 조건에서 제외. 이름, 성별, 소속학교만 있으면 통과.
+    # 엑셀 파일 검증 시 이름, 성별, 소속학교만 필수
     if not {'이름', '성별', '소속학교'}.issubset(df.columns):
         st.error("⚠️ 파일 첫 줄에 최소한 '이름', '성별', '소속학교' 가 정확히 적혀있는지 확인해주세요!")
     else:
@@ -163,23 +161,47 @@ if uploaded_file is not None:
         df['소속학교'] = df['소속학교'].astype(str).apply(lambda x: '교통대' if '교통' in x else ('건국대' if '건국' in x else x))
         
         # ==========================================
-        # [신규 기능] 학과 컬럼 유무에 따른 동적 처리
+        # [데이터 전처리] 학과 및 학년 컬럼 동적 처리
         # ==========================================
         has_dept = '학과' in df.columns
         if has_dept:
-            df['학과'] = df['학과'].fillna('미기재') # 빈칸은 미기재로 처리
+            df['학과'] = df['학과'].fillna('미기재')
         else:
-            df['학과'] = '미기재' # 학과 컬럼 자체가 없으면 전체 '미기재'로 통일하여 에러 방지
+            df['학과'] = '미기재'
+            
+        has_grade = '학년' in df.columns
+        if has_grade:
+            df['학년'] = df['학년'].astype(str).replace('nan', '미기재')
+        else:
+            df['학년'] = '미기재'
         
-        total_m_count = len(df[df['성별'] == '남'])
-        total_w_count = len(df[df['성별'] == '여'])
+        # ==========================================
+        # [신규 기능] 대시보드 통계 계산 및 UI 출력
+        # ==========================================
         total_count = len(df)
         
+        # 1. 성별 통계
+        total_m_count = len(df[df['성별'] == '남'])
+        total_w_count = len(df[df['성별'] == '여'])
         ratio_m = (total_m_count / total_count) * 100 if total_count > 0 else 0
         ratio_w = (total_w_count / total_count) * 100 if total_count > 0 else 0
         
+        # 2. 소속학교 통계
+        total_sch_a_count = len(df[df['소속학교'] == '교통대'])
+        total_sch_b_count = len(df[df['소속학교'] == '건국대'])
+        ratio_sch_a = (total_sch_a_count / total_count) * 100 if total_count > 0 else 0
+        ratio_sch_b = (total_sch_b_count / total_count) * 100 if total_count > 0 else 0
+        
         st.write(f"✅ **총 참가자 수: {total_count}명**")
-        st.info(f"📊 **참가자 성비 통계:** 👨 남성 {total_m_count}명 ({ratio_m:.1f}%) / 👩‍🦰 여성 {total_w_count}명 ({ratio_w:.1f}%)")
+        st.info(f"📊 **참가자 성비:** 👨 남성 {total_m_count}명 ({ratio_m:.1f}%) / 👩‍🦰 여성 {total_w_count}명 ({ratio_w:.1f}%)")
+        st.info(f"🏫 **소속학교 비율:** 🚆 교통대 {total_sch_a_count}명 ({ratio_sch_a:.1f}%) / 🐂 건국대 {total_sch_b_count}명 ({ratio_sch_b:.1f}%)")
+        
+        # 3. 학년 통계 (데이터가 존재하는 경우에만 출력)
+        if has_grade:
+            grade_counts = df[df['학년'] != '미기재']['학년'].value_counts().sort_index()
+            if not grade_counts.empty:
+                grade_stats_str = " / ".join([f"{grade} {count}명 ({(count/total_count)*100:.1f}%)" for grade, count in grade_counts.items()])
+                st.info(f"🎓 **학년별 비율:** {grade_stats_str}")
         
         people_list = df.to_dict('records')
         
@@ -200,8 +222,10 @@ if uploaded_file is not None:
                 
                 tabs = st.tabs([f"{r + 1}라운드" for r in range(len(all_rounds_data))])
                 
-                # 출력할 컬럼 동적 설정 (학과가 없으면 화면에서 숨김)
-                display_cols = ['이름', '성별', '소속학교', '학과'] if has_dept else ['이름', '성별', '소속학교']
+                # 출력할 컬럼 동적 설정 (학과/학년이 없으면 화면에서 숨김)
+                display_cols = ['이름', '성별', '소속학교']
+                if has_dept: display_cols.append('학과')
+                if has_grade: display_cols.append('학년')
 
                 for r_idx, tab in enumerate(tabs):
                     with tab:
@@ -232,6 +256,8 @@ if uploaded_file is not None:
                     }
                     if has_dept:
                         row_data["학과"] = person['학과']
+                    if has_grade:
+                        row_data["학년"] = person['학년']
                     
                     for r_idx, round_tables in enumerate(all_rounds_data):
                         for t_idx, table in enumerate(round_tables):
