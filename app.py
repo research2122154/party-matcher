@@ -10,7 +10,6 @@ st.subheader("교통대 x 건국대 글로컬 캠퍼스")
 # --- 1. 사이드바 설정 ---
 st.sidebar.header("⚙️ 파티 설정")
 table_count = st.sidebar.number_input("준비된 테이블 개수", min_value=1, value=12, step=1)
-# 라운드 선택 버튼은 삭제됨! (항상 1~3라운드 전체를 한 번에 생성함)
 
 # --- 2. 전체 스케줄 생성 알고리즘 ---
 def generate_full_schedule(people_list, num_tables, total_rounds=3):
