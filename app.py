@@ -151,7 +151,26 @@ if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
-    
+        
+    # ==========================================
+    # [추가된 로직] 컬럼명 유연한 인식 ('학과', '학년' 포함 여부)
+    # ==========================================
+    # '학과'라는 단어가 포함된 첫 번째 컬럼 찾기
+    dept_col = next((col for col in df.columns if '학과' in col), None)
+    # '학년'이라는 단어가 포함된 첫 번째 컬럼 찾기
+    grade_col = next((col for col in df.columns if '학년' in col), None)
+
+    rename_dict = {}
+    if dept_col and dept_col != '학과':
+        rename_dict[dept_col] = '학과'
+    if grade_col and grade_col != '학년':
+        rename_dict[grade_col] = '학년'
+        
+    # 찾은 컬럼들의 이름을 각각 '학과', '학년'으로 통일
+    if rename_dict:
+        df = df.rename(columns=rename_dict)
+    # ==========================================
+
     # 엑셀 파일 검증 시 이름, 성별, 소속학교만 필수
     if not {'이름', '성별', '소속학교'}.issubset(df.columns):
         st.error("⚠️ 파일 첫 줄에 최소한 '이름', '성별', '소속학교' 가 정확히 적혀있는지 확인해주세요!")
@@ -161,7 +180,7 @@ if uploaded_file is not None:
         df['소속학교'] = df['소속학교'].astype(str).apply(lambda x: '교통대' if '교통' in x else ('건국대' if '건국' in x else x))
         
         # ==========================================
-        # [데이터 전처리] 학과 및 학년 컬럼 동적 처리
+        # [데이터 전처리] 학과 및 학년 컬럼 동적 처리 (위에서 이름이 정규화되었으므로 그대로 사용)
         # ==========================================
         has_dept = '학과' in df.columns
         if has_dept:
