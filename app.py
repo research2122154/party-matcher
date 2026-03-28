@@ -70,27 +70,28 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
                         if t_idx in person_visited_tables[p['고유ID']]:
                             p_penalty += 8000
 
+                        # =========================================================
+                        # [신규 추가] 1.7순위: 지인(같은 학교 & 같은 학과) 동석 원천 차단
+                        # =========================================================
+                        for seated in round_tables[t_idx]:
+                            if p['소속학교'] == seated['소속학교'] and p['학과'] == seated['학과']:
+                                p_penalty += 20000 # 중복 만남보다 훨씬 강력한 패널티로 강제 분산 유도
+
                         # 현재 테이블에 이 사람을 앉혔을 때의 가상 데이터
                         temp_w = sum(1 for x in round_tables[t_idx] if x['성별'] == '여') + (1 if p['성별'] == '여' else 0)
                         temp_m = sum(1 for x in round_tables[t_idx] if x['성별'] == '남') + (1 if p['성별'] == '남' else 0)
                         temp_sch_b = sum(1 for x in round_tables[t_idx] if x['소속학교'] == '건국대') + (1 if p['소속학교'] == '건국대' else 0)
                         temp_sch_a = sum(1 for x in round_tables[t_idx] if x['소속학교'] == '교통대') + (1 if p['소속학교'] == '교통대' else 0)
 
-                        # =========================================================
                         # 2순위: 최대 정원 통제 및 수학적 고갈 방지 (Starvation Prevention)
-                        # =========================================================
-                        
-                        # [제한 1] 한 테이블에 할당된 최대 인원을 초과하려 하면 강력히 차단
                         if temp_w > max_w: p_penalty += 50000
                         if temp_m > max_m: p_penalty += 50000
                         if temp_sch_b > max_sch_b: p_penalty += 50000
                         if temp_sch_a > max_sch_a: p_penalty += 50000
 
-                        # [제한 2] 자원 고갈 방지 (빈 테이블이 굶어 죽는 현상 차단)
                         if p['성별'] == '여':
                             unseated_w = sum(1 for x in unseated if x['성별'] == '여')
                             tables_needing_w = sum(1 for t in round_tables if sum(1 for x in t if x['성별'] == '여') < min_w)
-                            # 현재 테이블이 이미 최소치를 달성했는데, 남은 여성이 빈 테이블을 채우기에도 빠듯하다면 착석 금지
                             if (temp_w - 1) >= min_w and unseated_w <= tables_needing_w:
                                 p_penalty += 50000
                                 
@@ -152,20 +153,32 @@ if uploaded_file is not None:
     else:
         df = pd.read_excel(uploaded_file)
     
-    if not {'이름', '성별', '소속학교'}.issubset(df.columns):
-        st.error("⚠️ 파일 첫 줄에 '이름', '성별', '소속학교' 가 정확히 적혀있는지 확인해주세요!")
+    # [수정] 엑셀 파일 검증 조건에 '학과' 추가
+    if not {'이름', '성별', '소속학교', '학과'}.issubset(df.columns):
+        st.error("⚠️ 파일 첫 줄에 '이름', '성별', '소속학교', '학과' 가 정확히 적혀있는지 확인해주세요!")
     else:
         # 데이터 자동 정제
         df['성별'] = df['성별'].astype(str).apply(lambda x: '남' if '남' in x else ('여' if '여' in x else x))
         df['소속학교'] = df['소속학교'].astype(str).apply(lambda x: '교통대' if '교통' in x else ('건국대' if '건국' in x else x))
+        
+        # ==========================================
+        # [신규 기능] 남녀 통계 및 비율 UI 출력
+        # ==========================================
+        total_m_count = len(df[df['성별'] == '남'])
+        total_w_count = len(df[df['성별'] == '여'])
+        total_count = len(df)
+        
+        ratio_m = (total_m_count / total_count) * 100 if total_count > 0 else 0
+        ratio_w = (total_w_count / total_count) * 100 if total_count > 0 else 0
+        
+        st.write(f"✅ **총 참가자 수: {total_count}명**")
+        st.info(f"📊 **참가자 성비 통계:** 👨 남성 {total_m_count}명 ({ratio_m:.1f}%) / 👩‍🦰 여성 {total_w_count}명 ({ratio_w:.1f}%)")
         
         people_list = df.to_dict('records')
         
         # 동명이인 처리를 위한 고유 ID 발급
         for idx, p in enumerate(people_list):
             p['고유ID'] = f"{p['이름']}_{idx}"
-
-        st.write(f"✅ **총 참가자 수: {len(df)}명**")
         
         st.write("---")
         if st.button("🚀 전체 라운드(1~3) 자리 배치 스케줄 생성!"):
@@ -176,7 +189,7 @@ if uploaded_file is not None:
                 st.success("🎉 파티 전체 스케줄 배치가 완료되었습니다!")
                 
                 st.write("### 🗺️ 라운드별 테이블 배치도 (운영진용)")
-                st.info("아래 각 라운드 탭을 클릭하여 테이블별 착석 인원(이름, 성별, 학교)을 확인하세요.")
+                st.info("아래 각 라운드 탭을 클릭하여 테이블별 착석 인원(이름, 성별, 학교, 학과)을 확인하세요.")
                 
                 tabs = st.tabs([f"{r + 1}라운드" for r in range(len(all_rounds_data))])
                 
@@ -189,7 +202,8 @@ if uploaded_file is not None:
                             with col:
                                 st.markdown(f"**📍 {t_idx + 1}번 테이블**")
                                 if table:
-                                    table_df = pd.DataFrame(table)[['이름', '성별', '소속학교']]
+                                    # [수정] 운영진 표에 '학과' 열 추가
+                                    table_df = pd.DataFrame(table)[['이름', '성별', '소속학교', '학과']]
                                     st.dataframe(table_df, hide_index=True, use_container_width=True)
                                 else:
                                     st.write("빈 테이블")
@@ -205,7 +219,8 @@ if uploaded_file is not None:
                         "번호": idx + 1,
                         "이름": name, 
                         "성별": person['성별'],
-                        "소속학교": person['소속학교']
+                        "소속학교": person['소속학교'],
+                        "학과": person['학과'] # [수정] 개인 스케줄 데이터에도 학과 추가
                     }
                     
                     for r_idx, round_tables in enumerate(all_rounds_data):
