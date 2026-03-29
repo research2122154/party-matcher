@@ -4,6 +4,34 @@ import random
 
 st.set_page_config(page_title="청취담 연합파티 매칭", page_icon="🍻", layout="wide")
 
+# ==========================================
+# [신규 기능] 단일 비밀번호 로그인 시스템
+# ==========================================
+# 처음 접속 시 로그인 상태를 False로 초기화
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+# 로그인되지 않은 상태일 때 보여줄 화면
+if not st.session_state["authenticated"]:
+    st.title("🔒 관리자 로그인")
+    st.info("스케줄러에 접근하려면 비밀번호를 입력해주세요.")
+    
+    # type="password"를 설정하면 입력한 문자가 점(•)으로 가려집니다.
+    pwd = st.text_input("비밀번호", type="password")
+    
+    if st.button("로그인"):
+        if pwd == "1234":
+            st.session_state["authenticated"] = True
+            st.rerun()  # 로그인 성공 시 즉시 화면을 새로고침하여 메인 화면 진입
+        else:
+            st.error("⚠️ 비밀번호가 틀렸습니다.")
+            
+    # 중요: 로그인이 완료되지 않았다면 st.stop()을 통해 아래의 스케줄러 코드가 실행되지 않도록 차단합니다.
+    st.stop()
+# ==========================================
+
+
+# (이하 기존 스케줄러 코드 동일)
 st.title("🍻 청취담 연합파티 스케줄러 (사전 배치용)")
 st.subheader("교통대 x 건국대 글로컬 캠퍼스")
 
@@ -152,22 +180,17 @@ if uploaded_file is not None:
     else:
         df = pd.read_excel(uploaded_file)
         
-    # ==========================================
     # [수정된 로직] 필수 및 선택 항목 모두 유연하게 인식
-    # ==========================================
     target_keywords = ['이름', '성별', '소속학교', '학과', '학년']
     rename_dict = {}
 
     for keyword in target_keywords:
-        # 해당 키워드가 포함된 가장 첫 번째(왼쪽) 컬럼을 찾습니다.
         matched_col = next((col for col in df.columns if keyword in str(col)), None)
         if matched_col and matched_col != keyword:
             rename_dict[matched_col] = keyword
             
-    # 찾은 컬럼들의 이름을 표준화된 이름으로 일괄 변경
     if rename_dict:
         df = df.rename(columns=rename_dict)
-    # ==========================================
 
     # 엑셀 파일 검증 시 이름, 성별, 소속학교 관련 열이 성공적으로 인식되었는지 확인
     if not {'이름', '성별', '소속학교'}.issubset(df.columns):
