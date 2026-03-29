@@ -315,14 +315,21 @@ if uploaded_file is not None:
             wait_df = st.session_state['waitlist_df']
             
             st.info(f"🎯 **최종 선발 완료 ({len(sel_df)}명):** 👨 남성 {len(sel_df[sel_df['성별']=='남'])}명 / 👩‍🦰 여성 {len(sel_df[sel_df['성별']=='여'])}명")
+            
+            # [복구 완료 부분] 참가자 명단과 대기자 명단을 화면에 테이블로 즉시 출력
+            st.write("### ✅ 최종 참가 확정 명단")
+            st.dataframe(sel_df.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore'), hide_index=True, use_container_width=True)
+            
             if len(wait_df) > 0:
                 st.warning(f"⏳ **대기자 발생 ({len(wait_df)}명)** - 아래 버튼을 눌러 대기자 명단을 엑셀로 저장하세요.")
+                st.write("### ⏳ 대기자 명단 (미선정자)")
+                st.dataframe(wait_df.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore'), hide_index=True, use_container_width=True)
             
             # 엑셀 다운로드 (에러 방지를 위해 engine 제거)
             def to_excel(df_to_save):
                 output = io.BytesIO()
                 with pd.ExcelWriter(output) as writer:
-                    df_to_save.drop(columns=['매칭키', '우선순위'], errors='ignore').to_excel(writer, index=False, sheet_name='Sheet1')
+                    df_to_save.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore').to_excel(writer, index=False, sheet_name='Sheet1')
                 return output.getvalue()
 
             col_btn1, col_btn2 = st.columns(2)
@@ -468,7 +475,7 @@ if uploaded_file is not None:
                     st.write("---")
                     
                     # ==========================================
-                    # [신규 추가] 참가자별 만남 통계 및 개인 스케줄표
+                    # 참가자별 만남 통계 및 개인 스케줄표
                     # ==========================================
                     uid_to_person = {p['고유ID']: p for p in sel_list}
                     personal_stats = {p['고유ID']: {'met_unique': set()} for p in sel_list}
