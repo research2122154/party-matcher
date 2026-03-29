@@ -59,7 +59,7 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
     best_all_rounds = []
     global_min_penalty = float('inf')
 
-    for attempt in range(50): 
+    for attempt in range(300): 
         # [핵심 2] 과거 파티에서 만났던 기록을 현재 패널티(met_pairs)에 주입
         met_pairs = set(past_met_pairs) if past_met_pairs else set()
         person_visited_tables = {p['고유ID']: set() for p in people_list}
