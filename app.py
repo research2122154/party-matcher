@@ -395,19 +395,18 @@ if uploaded_file is not None:
                     all_rounds_data = generate_full_schedule(sel_list, table_count, past_met_pairs=past_met_pairs)
                     st.success("🎉 파티 전체 스케줄 배치가 완료되었습니다!")
                     
-                    # ==========================================
+                   # ==========================================
                     # [신규 추가] 3부: 사후 검증 리포트 및 품질 분석
                     # ==========================================
                     st.write("---")
                     st.write("### 📊 자리 배치 품질 검증 리포트")
                     
                     dup_meets = 0
-                    dup_meet_tables = [] # [추가됨] 중복 만남이 발생한 테이블을 담을 리스트
+                    dup_meet_details = []  # [수정됨] 중복 만남 발생 시 '누구와 누가 만났는지' 저장할 리스트
                     skewed_gender_tables = []
                     skewed_univ_tables = []
                     same_major_tables = []
                     
-                    # [수정됨] 과거 파티에서 만났던 기록까지 포함하여 더욱 엄격하게 중복 만남을 색출
                     all_met = set(past_met_pairs) if past_met_pairs else set()
                     
                     for r_idx, round_tables in enumerate(all_rounds_data):
@@ -430,19 +429,17 @@ if uploaded_file is not None:
                             if len(univ_majors) != len(set(univ_majors)):
                                 same_major_tables.append(f"{r_idx+1}R {t_idx+1}번")
                                 
-                            # 4. 중복 만남 카운트 및 테이블 위치 기록
-                            has_dup_in_this_table = False
+                            # 4. 중복 만남 카운트 및 [상세 인물 기록]
                             for i in range(len(table)):
                                 for j in range(i+1, len(table)):
                                     pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
                                     if pair in all_met:
                                         dup_meets += 1
-                                        has_dup_in_this_table = True
+                                        # [추가됨] 누구와 누가 만났는지 이름과 테이블 위치를 함께 기록
+                                        p1_name = table[i]['이름']
+                                        p2_name = table[j]['이름']
+                                        dup_meet_details.append(f"{p1_name} & {p2_name} ({r_idx+1}R {t_idx+1}번)")
                                     all_met.add(pair)
-                                    
-                            # 이 테이블에서 중복이 한 번이라도 발생했다면 리스트에 추가
-                            if has_dup_in_this_table:
-                                dup_meet_tables.append(f"{r_idx+1}R {t_idx+1}번")
                     
                     col_r1, col_r2, col_r3, col_r4 = st.columns(4)
                     col_r1.metric("🚨 중복 만남 횟수", f"{dup_meets}건")
@@ -451,8 +448,8 @@ if uploaded_file is not None:
                     col_r4.metric("📚 동일 학과 충돌", f"{len(same_major_tables)}개")
                     
                     with st.expander("🔍 상세 에러 테이블 확인하기 (클릭)"):
-                        # [추가됨] 중복 만남 테이블 출력 로직
-                        st.write(f"- **중복 만남 발생:** {', '.join(dup_meet_tables) if dup_meet_tables else '없음 (완벽)'}")
+                        # [수정됨] 상세 인원 정보 출력
+                        st.write(f"- **중복 만남 발생:** {', '.join(dup_meet_details) if dup_meet_details else '없음 (완벽)'}")
                         st.write(f"- **성비 불균형 (3:1 등):** {', '.join(skewed_gender_tables) if skewed_gender_tables else '없음 (완벽)'}")
                         st.write(f"- **대학 쏠림:** {', '.join(skewed_univ_tables) if skewed_univ_tables else '없음 (완벽)'}")
                         st.write(f"- **동일 학과 충돌:** {', '.join(same_major_tables) if same_major_tables else '없음 (완벽)'}")
