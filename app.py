@@ -28,7 +28,7 @@ if not st.session_state["authenticated"]:
 # ==========================================
 
 st.title("🍻 청취담 연합파티 스케줄러 (사전 배치용)")
-st.subheader("교통대 x 건국대 글로컬 캠퍼스")
+st.subheader("청취담 파티 스마트 매칭 시스템 V2")
 
 # --- 1. 사이드바 설정 ---
 st.sidebar.header("⚙️ 파티 설정")
@@ -50,7 +50,6 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
     min_m = total_m // num_tables
     max_m = (total_m + num_tables - 1) // num_tables if num_tables else 0
     
-    # [핵심 1] 동적 N개 대학 자동 인식 및 수학적 할당량 계산
     unique_univs = set(p['재학중인대학'] for p in people_list)
     univ_counts = {u: sum(1 for p in people_list if p['재학중인대학'] == u) for u in unique_univs}
     min_u = {u: count // num_tables for u, count in univ_counts.items()}
@@ -60,7 +59,6 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
     global_min_penalty = float('inf')
 
     for attempt in range(50): 
-        # [핵심 2] 과거 파티에서 만났던 기록을 현재 패널티(met_pairs)에 주입
         met_pairs = set(past_met_pairs) if past_met_pairs else set()
         person_visited_tables = {p['고유ID']: set() for p in people_list}
         current_all_rounds = []
@@ -90,13 +88,12 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
                         temp_w = sum(1 for x in round_tables[t_idx] if x['성별'] == '여') + (1 if p['성별'] == '여' else 0)
                         temp_m = sum(1 for x in round_tables[t_idx] if x['성별'] == '남') + (1 if p['성별'] == '남' else 0)
                         
-                        # [핵심 3] 동적 N개 대학 현재 테이블 인원 스캔
                         temp_univ_counts = {u: sum(1 for x in round_tables[t_idx] if x['재학중인대학'] == u) for u in unique_univs}
                         temp_univ_counts[p['재학중인대학']] += 1
 
                         if temp_w > max_w: p_penalty += 50000
                         if temp_m > max_m: p_penalty += 50000
-                        # N개 대학 정원 통제 적용
+                        
                         for u in unique_univs:
                             if temp_univ_counts[u] > max_u[u]: p_penalty += 50000
                             
@@ -109,7 +106,6 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
                             tables_needing_m = sum(1 for t in round_tables if sum(1 for x in t if x['성별'] == '남') < min_m)
                             if (temp_m - 1) >= min_m and unseated_m <= tables_needing_m: p_penalty += 50000
                             
-                        # [핵심 4] N개 대학별 고갈 방지 (Starvation Prevention)
                         curr_u = p['재학중인대학']
                         unseated_curr_u = sum(1 for x in unseated if x['재학중인대학'] == curr_u)
                         tables_needing_curr_u = sum(1 for t in round_tables if sum(1 for x in t if x['재학중인대학'] == curr_u) < min_u[curr_u])
@@ -162,7 +158,6 @@ if uploaded_file is not None:
             if keyword == '신규': rename_dict[matched_col] = '참여이력'
             else: rename_dict[matched_col] = keyword
             
-    # 혹시 업로드 파일에 '소속학교' 또는 '학교'라는 열이 있으면 '재학중인대학'으로 통일되게 추가 처리
     if '소속학교' in df.columns and '재학중인대학' not in df.columns: rename_dict['소속학교'] = '재학중인대학'
     if '학교' in df.columns and '재학중인대학' not in df.columns: rename_dict['학교'] = '재학중인대학'
             
@@ -172,29 +167,22 @@ if uploaded_file is not None:
     if not {'이름', '성별', '재학중인대학'}.issubset(df.columns):
         st.error("⚠️ 파일 첫 줄에 최소한 '이름', '성별', '재학중인대학' (또는 소속학교/학교) 관련 단어가 포함되어 있는지 확인해주세요!")
     else:
-        # 데이터 자동 정제
         df['성별'] = df['성별'].astype(str).apply(lambda x: '남' if '남' in x else ('여' if '여' in x else x))
         df['재학중인대학'] = df['재학중인대학'].astype(str).apply(lambda x: '교통대' if '교통' in x else ('건국대' if '건국' in x else x))
         
         has_dept = '학과' in df.columns
-        if has_dept:
-            df['학과'] = df['학과'].fillna('미기재')
-        else:
-            df['학과'] = '미기재'
+        if has_dept: df['학과'] = df['학과'].fillna('미기재')
+        else: df['학과'] = '미기재'
             
         has_grade = '학년' in df.columns
-        if has_grade:
-            df['학년'] = df['학년'].astype(str).replace('nan', '미기재')
-        else:
-            df['학년'] = '미기재'
+        if has_grade: df['학년'] = df['학년'].astype(str).replace('nan', '미기재')
+        else: df['학년'] = '미기재'
             
-        if '참여이력' not in df.columns:
-            df['참여이력'] = '신규' 
-        else:
-            df['참여이력'] = df['참여이력'].astype(str).apply(lambda x: '크루' if '크루' in x or '기존' in x else '신규')
+        if '참여이력' not in df.columns: df['참여이력'] = '신규' 
+        else: df['참여이력'] = df['참여이력'].astype(str).apply(lambda x: '크루' if '크루' in x or '기존' in x else '신규')
         
         # ==========================================
-        # 대시보드 통계 계산 및 UI 출력 (비율 포함)
+        # 대시보드 통계 계산 및 UI 출력
         # ==========================================
         total_count = len(df)
         
@@ -218,14 +206,12 @@ if uploaded_file is not None:
                 grade_stats_str = " / ".join([f"{grade} {count}명 ({(count/total_count)*100:.1f}%)" for grade, count in grade_counts.items()])
                 st.info(f"🎓 **학년별 비율:** {grade_stats_str}")
         
-        # 과거 대기자 처리 (우선 선발용)
         df['매칭키'] = df['이름'].astype(str) + df['성별'].astype(str) + df['재학중인대학'].astype(str)
         past_keys = set()
         if past_waitlist_file is not None:
             if past_waitlist_file.name.endswith('.csv'): df_past = pd.read_csv(past_waitlist_file)
             else: df_past = pd.read_excel(past_waitlist_file)
             try:
-                # 과거 대기자 파일의 컬럼명 통일 보정 (학교, 소속학교 -> 재학중인대학)
                 if '소속학교' in df_past.columns and '재학중인대학' not in df_past.columns: df_past.rename(columns={'소속학교': '재학중인대학'}, inplace=True)
                 if '학교' in df_past.columns and '재학중인대학' not in df_past.columns: df_past.rename(columns={'학교': '재학중인대학'}, inplace=True)
                 
@@ -251,7 +237,6 @@ if uploaded_file is not None:
                 target_m = party_capacity // 2
                 target_w = party_capacity // 2
                 
-                # 유연한 성비 보정 로직
                 if len(df_w) < target_w:
                     target_w = len(df_w)
                     target_m = party_capacity - target_w 
@@ -283,7 +268,6 @@ if uploaded_file is not None:
                     target_new = remaining_target // 2 + remaining_target % 2 
                     target_crew = remaining_target // 2
                     
-                    # Spill-over (부족한 쪽의 남는 자리를 다른 쪽으로)
                     if len(df_new) < target_new:
                         target_crew += (target_new - len(df_new))
                         target_new = len(df_new)
@@ -304,25 +288,29 @@ if uploaded_file is not None:
                 final_selected_df = pd.concat([selected_m, selected_w]).sample(frac=1).reset_index(drop=True)
                 final_waitlist_df = pd.concat([waitlist_m, waitlist_w]).sample(frac=1).reset_index(drop=True)
                 
-                # 다음 단계를 위해 Session State에 저장
                 st.session_state['selected_df'] = final_selected_df
                 st.session_state['waitlist_df'] = final_waitlist_df
                 st.success("🎉 참가자 선발 및 대기자 추출이 완료되었습니다! 아래 결과를 확인해주세요.")
 
-        # 1단계 선발이 완료되어 Session State에 데이터가 있는 경우 다운로드 버튼 및 2단계 표시
         if 'selected_df' in st.session_state:
             sel_df = st.session_state['selected_df']
             wait_df = st.session_state['waitlist_df']
             
             st.info(f"🎯 **최종 선발 완료 ({len(sel_df)}명):** 👨 남성 {len(sel_df[sel_df['성별']=='남'])}명 / 👩‍🦰 여성 {len(sel_df[sel_df['성별']=='여'])}명")
+            
+            # [복구 완료] 1단계 선발 직후 참가자 명단 및 대기자 명단 화면 출력
+            st.write("### ✅ 최종 참가 확정 명단")
+            st.dataframe(sel_df.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore'), hide_index=True, use_container_width=True)
+            
             if len(wait_df) > 0:
                 st.warning(f"⏳ **대기자 발생 ({len(wait_df)}명)** - 아래 버튼을 눌러 대기자 명단을 엑셀로 저장하세요.")
+                st.write("### ⏳ 대기자 명단 (미선정자)")
+                st.dataframe(wait_df.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore'), hide_index=True, use_container_width=True)
             
-            # 엑셀 다운로드 (에러 방지를 위해 engine 제거)
             def to_excel(df_to_save):
                 output = io.BytesIO()
                 with pd.ExcelWriter(output) as writer:
-                    df_to_save.drop(columns=['매칭키', '우선순위'], errors='ignore').to_excel(writer, index=False, sheet_name='Sheet1')
+                    df_to_save.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore').to_excel(writer, index=False, sheet_name='Sheet1')
                 return output.getvalue()
 
             col_btn1, col_btn2 = st.columns(2)
@@ -344,39 +332,31 @@ if uploaded_file is not None:
                 with st.spinner('수만 가지의 경우의 수를 분석하여 최적의 동선을 계산 중입니다...'):
                     sel_list = st.session_state['selected_df'].to_dict('records')
                     
-                    # 1. 현재 파티원의 고유 식별 체계 생성
                     key_to_uid = {}
                     for idx, p in enumerate(sel_list): 
                         p['고유ID'] = f"{p['이름']}_{idx}"
-                        # 과거 데이터와 대조하기 위한 절대 매칭키
                         matching_key = f"{p['이름']}_{p['재학중인대학']}_{p['성별']}"
                         key_to_uid[matching_key] = p['고유ID']
                         
-                    # 2. 과거 파티 자리배치표 파싱 로직
                     past_met_pairs = set()
                     if past_seat_file is not None:
                         try:
                             df_ps = pd.read_csv(past_seat_file) if past_seat_file.name.endswith('.csv') else pd.read_excel(past_seat_file)
                             
-                            # [오류 방어] '학교'나 '소속학교' 열이 있다면 '재학중인대학'으로 이름 통일
                             if '학교' in df_ps.columns and '재학중인대학' not in df_ps.columns:
                                 df_ps.rename(columns={'학교': '재학중인대학'}, inplace=True)
                             elif '소속학교' in df_ps.columns and '재학중인대학' not in df_ps.columns:
                                 df_ps.rename(columns={'소속학교': '재학중인대학'}, inplace=True)
                                 
-                            # '라운드' 또는 'R'이 들어간 컬럼을 모두 라운드 정보로 자동 인식
                             round_cols = [c for c in df_ps.columns if '라운드' in c or 'R' in c]
                             df_ps['매칭키'] = df_ps['이름'].astype(str) + "_" + df_ps['재학중인대학'].astype(str) + "_" + df_ps['성별'].astype(str)
                             
                             for r_col in round_cols:
-                                # 같은 라운드에서 같은 테이블(값)을 가진 사람들끼리 그룹핑
                                 for table_name, group in df_ps.groupby(r_col):
                                     members = group['매칭키'].dropna().tolist()
-                                    # 테이블 내 모든 인원의 쌍(Pair) 생성
                                     for i in range(len(members)):
                                         for j in range(i+1, len(members)):
                                             p1_key, p2_key = members[i], members[j]
-                                            # 두 명 모두 '이번 파티'에 합격하여 참가한 경우에만 패널티 등록
                                             if p1_key in key_to_uid and p2_key in key_to_uid:
                                                 past_met_pairs.add(tuple(sorted([key_to_uid[p1_key], key_to_uid[p2_key]])))
                             
@@ -384,12 +364,11 @@ if uploaded_file is not None:
                         except Exception as e:
                             st.warning(f"⚠️ 과거 자리배치표 파싱 오류 (컬럼명을 확인해주세요): {e}")
                     
-                    # 3. 알고리즘 최종 구동 (과거 만남 기록 주입)
                     all_rounds_data = generate_full_schedule(sel_list, table_count, past_met_pairs=past_met_pairs)
                     st.success("🎉 파티 전체 스케줄 배치가 완료되었습니다!")
                     
                     # ==========================================
-                    # [신규 추가] 3부: 사후 검증 리포트 및 품질 분석
+                    # 3부: 사후 검증 리포트 및 품질 분석
                     # ==========================================
                     st.write("---")
                     st.write("### 📊 자리 배치 품질 검증 리포트")
@@ -403,25 +382,21 @@ if uploaded_file is not None:
                     
                     for r_idx, round_tables in enumerate(all_rounds_data):
                         for t_idx, table in enumerate(round_tables):
-                            # 1. 성비 불균형 (예: 4명 중 남녀 차이가 2 이상이면 3:1 또는 4:0)
                             m_count = sum(1 for p in table if p['성별'] == '남')
                             w_count = sum(1 for p in table if p['성별'] == '여')
                             if abs(m_count - w_count) > 1: 
                                 skewed_gender_tables.append(f"{r_idx+1}R {t_idx+1}번")
                                 
-                            # 2. 대학 불균형 (특정 대학이 테이블 정원의 절반을 초과할 경우)
                             table_capacity = len(table)
                             univ_counts = {}
                             for p in table: univ_counts[p['재학중인대학']] = univ_counts.get(p['재학중인대학'], 0) + 1
                             if any(c > (table_capacity // 2 + table_capacity % 2) for c in univ_counts.values()):
                                 skewed_univ_tables.append(f"{r_idx+1}R {t_idx+1}번")
                                 
-                            # 3. 동일 학과 충돌
                             majors = [p.get('학과', '미기재') for p in table if p.get('학과', '미기재') != '미기재']
                             if len(majors) != len(set(majors)):
                                 same_major_tables.append(f"{r_idx+1}R {t_idx+1}번")
                                 
-                            # 4. 중복 만남 카운트
                             for i in range(len(table)):
                                 for j in range(i+1, len(table)):
                                     pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
@@ -468,12 +443,11 @@ if uploaded_file is not None:
                     st.write("---")
                     
                     # ==========================================
-                    # [신규 추가] 참가자별 만남 통계 및 개인 스케줄표
+                    # 참가자별 만남 통계 및 개인 스케줄표
                     # ==========================================
                     uid_to_person = {p['고유ID']: p for p in sel_list}
                     personal_stats = {p['고유ID']: {'met_unique': set()} for p in sel_list}
                     
-                    # 모든 라운드를 순회하며 '내가 만난 유니크한 사람들'의 고유 ID를 수집
                     for round_tables in all_rounds_data:
                         for table in round_tables:
                             for p in table:
@@ -485,7 +459,6 @@ if uploaded_file is not None:
                     for idx, person in enumerate(sel_list):
                         uid = person['고유ID']
                         
-                        # 개인별 통계 계산 (만난 이성 수, 타대학 인원 수)
                         met_uids = personal_stats[uid]['met_unique']
                         opp_sex_count = sum(1 for u in met_uids if uid_to_person[u]['성별'] != person['성별'])
                         other_univ_count = sum(1 for u in met_uids if uid_to_person[u]['재학중인대학'] != person['재학중인대학'])
@@ -505,7 +478,6 @@ if uploaded_file is not None:
                                     row_data[f"{r_idx + 1}라운드 테이블"] = f"{t_idx + 1}번"
                                     break
                                     
-                        # 스케줄표에 통계 데이터 열 추가
                         row_data["만난 이성(명)"] = opp_sex_count
                         row_data["만난 타대학(명)"] = other_univ_count
                         
@@ -517,15 +489,9 @@ if uploaded_file is not None:
                     st.info("💡 모든 참가자가 3라운드 동안 최대로 많은 이성과 타대학 사람을 만났는지 우측 통계 열에서 확인할 수 있습니다.")
                     st.dataframe(result_df, hide_index=True, use_container_width=True)
                     
-                    # 엑셀 다운로드 (최종 스케줄표)
                     col_dl1, col_dl2 = st.columns(2)
                     with col_dl1:
                         st.download_button(label="📥 최종 자리배치표 엑셀 다운로드", data=to_excel(result_df), file_name='파티_최종자리배치표.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                    
-                    if 'waitlist_df' in st.session_state and len(st.session_state['waitlist_df']) > 0:
-                        st.write("### ⏳ 대기자 명단 (미선정자)")
-                        display_wait_df = st.session_state['waitlist_df'].drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore')
-                        st.dataframe(display_wait_df, hide_index=True, use_container_width=True)
                     
                     st.write("---")
                     st.write("### 📝 개별 안내용 텍스트 (복사해서 카톡 전송용)")
