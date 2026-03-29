@@ -204,11 +204,12 @@ if uploaded_file is not None:
 
     for keyword in target_keywords:
         matched_col = next((col for col in df.columns if keyword.lower() in str(col).lower()), None)
-        if matched_col and matched_col != keyword:
+        if matched_col:
+            # [수정] 연락처나 신규 등의 키워드는 원래 이름과 같아도 무조건 표준이름으로 변경하도록 로직 강화
             if keyword == '신규': rename_dict[matched_col] = '참여이력'
             elif keyword == '연락처': rename_dict[matched_col] = '전화번호'
             elif keyword.lower() == 'mbti': rename_dict[matched_col] = 'MBTI'
-            else: rename_dict[matched_col] = keyword
+            elif matched_col != keyword: rename_dict[matched_col] = keyword
             
     if '소속학교' in df.columns and '재학중인대학' not in df.columns: rename_dict['소속학교'] = '재학중인대학'
     if '학교' in df.columns and '재학중인대학' not in df.columns: rename_dict['학교'] = '재학중인대학'
@@ -370,7 +371,6 @@ if uploaded_file is not None:
             
             st.info(f"🎯 **최종 선발 완료 ({len(sel_df)}명):** 👨 남성 {len(sel_df[sel_df['성별']=='남'])}명 / 👩‍🦰 여성 {len(sel_df[sel_df['성별']=='여'])}명")
             
-            # [조건 1 반영] 최종 확정 명단 하단에 기존/신규 인원 비율 추가
             crew_sel = len(sel_df[sel_df['참여이력'] == '크루'])
             new_sel = len(sel_df[sel_df['참여이력'] == '신규'])
             st.info(f"👥 **참여이력 비율:** 🌟 신규 {new_sel}명 / 🎖️ 기존(크루) {crew_sel}명")
@@ -383,7 +383,6 @@ if uploaded_file is not None:
                 st.write("---")
                 st.warning(f"⏳ **대기자 발생 ({len(wait_df)}명)**")
                 
-                # [조건 1 반영] 대기자 명단 하단에 기존/신규 인원 비율 추가
                 crew_wait = len(wait_df[wait_df['참여이력'] == '크루'])
                 new_wait = len(wait_df[wait_df['참여이력'] == '신규'])
                 st.info(f"👥 **대기자 참여이력 비율:** 🌟 신규 {new_wait}명 / 🎖️ 기존(크루) {crew_wait}명")
@@ -467,7 +466,6 @@ if uploaded_file is not None:
                 st.write("---")
                 st.write("### 📊 자리 배치 품질 검증 리포트")
                 
-                # [조건 2 반영] 4분할 중복 추적 변수 셋업
                 dup_diff_curr = 0; dup_diff_curr_details = []
                 dup_same_curr = 0; dup_same_curr_details = []
                 dup_diff_past = 0; dup_diff_past_details = []
@@ -483,7 +481,6 @@ if uploaded_file is not None:
                 all_met_current_report = set()
                 past_met_pairs_set_report = set(past_met_pairs) if past_met_pairs else set()
                 
-                # 성비 검증을 위한 전체 선발 인원 기준 min/max 재계산
                 total_m_sel = sum(1 for p in sel_list if p['성별'] == '남')
                 total_w_sel = sum(1 for p in sel_list if p['성별'] == '여')
                 min_m_sel = total_m_sel // table_count if table_count else 0
@@ -497,7 +494,6 @@ if uploaded_file is not None:
 
                 for r_idx, round_tables in enumerate(all_rounds_data):
                     for t_idx, table in enumerate(round_tables):
-                        # 성비 붕괴 로직 정상화 (수학적 할당량을 벗어난 경우만 체크)
                         m_count = sum(1 for p in table if p['성별'] == '남')
                         w_count = sum(1 for p in table if p['성별'] == '여')
                         if m_count < min_m_sel or m_count > max_m_sel or w_count < min_w_sel or w_count > max_w_sel:
@@ -517,7 +513,6 @@ if uploaded_file is not None:
                         if e_count < min_e_sel or e_count > max_e_sel:
                             skewed_mbti_tables.append(f"{r_idx+1}R {t_idx+1}번")
                             
-                        # [조건 2 반영] 4분할 중복 추적 실행
                         for i in range(len(table)):
                             for j in range(i+1, len(table)):
                                 pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
@@ -527,7 +522,6 @@ if uploaded_file is not None:
                                 p2_name = table[j]['이름']
                                 detail_str = f"{p1_name} - {p2_name} ({r_idx+1}R {t_idx+1}번)"
                                 
-                                # 당일 중복 처리
                                 if pair in all_met_current_report:
                                     if is_diff_sex:
                                         dup_diff_curr += 1
@@ -536,7 +530,6 @@ if uploaded_file is not None:
                                         dup_same_curr += 1
                                         dup_same_curr_details.append(detail_str)
                                 
-                                # 과거 중복 처리
                                 if pair in past_met_pairs_set_report:
                                     if is_diff_sex:
                                         dup_diff_past += 1
@@ -571,7 +564,6 @@ if uploaded_file is not None:
                         ghost_meets += 1
                         ghost_details.append(f"{person['이름']} ({', '.join(ghost_info)})")
 
-                # UI 배치 업데이트
                 col_r1, col_r2, col_r3, col_r4 = st.columns(4)
                 col_r1.metric("🚨 이성 중복 만남(당일)", f"{dup_diff_curr}건")
                 col_r2.metric("🚨 동성 중복 만남(당일)", f"{dup_same_curr}건")
