@@ -411,8 +411,15 @@ if uploaded_file is not None:
                     
                     result_df = pd.DataFrame(schedule_results)
                     
-                    st.write("### 📋 개인별 파티 스케줄표 (전체 명단)")
+                    st.write("### 📋 개인별 파티 스케줄표 (전체 참가자 명단)")
                     st.dataframe(result_df, hide_index=True, use_container_width=True)
+                    
+                    # [신규 추가] 대기자가 존재할 경우 스케줄표 바로 밑에 표로 띄워줌
+                    if 'waitlist_df' in st.session_state and len(st.session_state['waitlist_df']) > 0:
+                        st.write("### ⏳ 대기자 명단 (미선정자)")
+                        # 불필요한 계산용 열(매칭키, 우선순위 등)은 숨기고 예쁘게 출력
+                        display_wait_df = st.session_state['waitlist_df'].drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore')
+                        st.dataframe(display_wait_df, hide_index=True, use_container_width=True)
                     
                     st.write("---")
                     st.write("### 📝 개별 안내용 텍스트 (복사해서 카톡 전송용)")
