@@ -89,10 +89,8 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
                         for seated in round_tables[t_idx]:
                             pair = tuple(sorted([p['고유ID'], seated['고유ID']]))
                             
-                            # [핵심 변경] 당일 만남은 동성/이성 무조건 차단 (100,000점)
                             if pair in current_met_pairs:
                                 p_penalty += 100000 
-                            # 과거 만남은 '이성'일 경우에만 차단 (50,000점)
                             elif pair in past_met_pairs_set and p['성별'] != seated['성별']:
                                 p_penalty += 50000 
                                     
@@ -497,7 +495,6 @@ if uploaded_file is not None:
                         if e_count < min_e_sel or e_count > max_e_sel:
                             skewed_mbti_tables.append(f"{r_idx+1}R {t_idx+1}번")
                             
-                        # [핵심 변경] 당일 만남은 동성/이성 모두 에러로 처리
                         for i in range(len(table)):
                             for j in range(i+1, len(table)):
                                 pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
@@ -549,8 +546,9 @@ if uploaded_file is not None:
                         ghost_meets += 1
                         ghost_details.append(f"{person['이름']} ({', '.join(ghost_info)})")
 
+                # [수정 적용] 라벨 텍스트 변경: (당일) 및 (이전)
                 col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-                col_r1.metric("🚨 이성 중복 만남", f"{dup_meets}건")
+                col_r1.metric("🚨 이성 중복 만남(당일)", f"{dup_meets}건")
                 col_r2.metric("⚖️ 성비 불균형", f"{len(skewed_gender_tables)}건")
                 col_r3.metric("🏫 대학 쏠림", f"{len(skewed_univ_tables)}건")
                 col_r4.metric("📚 학과 충돌", f"{len(same_major_tables)}건")
@@ -558,11 +556,11 @@ if uploaded_file is not None:
                 col_r5, col_r6, col_r7 = st.columns(3)
                 col_r5.metric("💬 MBTI 분산실패", f"{len(skewed_mbti_tables)}건")
                 col_r6.metric("🪑 지박령 발생", f"{ghost_meets}명")
-                col_r7.metric("🚨 동성 중복 만남", f"{same_sex_dup_meets}건")
+                col_r7.metric("🚨 동성 중복 만남(이전)", f"{same_sex_dup_meets}건")
                 
                 with st.expander("🔍 상세 에러 테이블 확인하기 (클릭)"):
-                    st.write(f"- **이성 중복 만남 발생:** {', '.join(dup_meet_details) if dup_meet_details else '없음 (완벽)'}")
-                    st.write(f"- **동성 중복 만남 발생:** {', '.join(same_sex_dup_meet_details) if same_sex_dup_meet_details else '없음 (완벽)'}")
+                    st.write(f"- **이성 중복 만남(당일) 발생:** {', '.join(dup_meet_details) if dup_meet_details else '없음 (완벽)'}")
+                    st.write(f"- **동성 중복 만남(이전) 발생:** {', '.join(same_sex_dup_meet_details) if same_sex_dup_meet_details else '없음 (완벽)'}")
                     st.write(f"- **성비 불균형 (3:1 등):** {', '.join(skewed_gender_tables) if skewed_gender_tables else '없음 (완벽)'}")
                     st.write(f"- **대학 쏠림:** {', '.join(skewed_univ_tables) if skewed_univ_tables else '없음 (완벽)'}")
                     st.write(f"- **동일 학과 충돌:** {', '.join(same_major_tables) if same_major_tables else '없음 (완벽)'}")
@@ -612,14 +610,15 @@ if uploaded_file is not None:
                     opp_sex_count = sum(1 for u in met_uids if uid_to_person[u]['성별'] != person['성별'])
                     other_univ_count = sum(1 for u in met_uids if uid_to_person[u]['재학중인대학'] != person['재학중인대학'])
                     
+                    # [수정 적용] MBTI를 포함하여 항상 일정한 컬럼 생성
                     row_data = {
                         "번호": idx + 1,
                         "이름": person['이름'],
                         "전화번호": person.get('전화번호', '미기재'),
                         "성별": person['성별'],
+                        "MBTI": person.get('MBTI', '미기재'),
                         "재학중인대학": person['재학중인대학']
                     }
-                    if has_mbti: row_data["MBTI"] = person.get('MBTI', '미기재')
                     if has_dept: row_data["학과"] = person.get('학과', '미기재')
                     if has_grade: row_data["학년"] = person.get('학년', '미기재')
                     
