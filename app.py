@@ -59,7 +59,7 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
     best_all_rounds = []
     global_min_penalty = float('inf')
 
-    for attempt in range(300): 
+    for attempt in range(100): 
         # [핵심 2] 과거 파티에서 만났던 기록을 현재 패널티(met_pairs)에 주입
         met_pairs = set(past_met_pairs) if past_met_pairs else set()
         person_visited_tables = {p['고유ID']: set() for p in people_list}
@@ -423,9 +423,9 @@ if uploaded_file is not None:
                             if any(c > (table_capacity // 2 + table_capacity % 2) for c in univ_counts.values()):
                                 skewed_univ_tables.append(f"{r_idx+1}R {t_idx+1}번")
                                 
-                            # 3. 동일 학과 충돌
-                            majors = [p.get('학과', '미기재') for p in table if p.get('학과', '미기재') != '미기재']
-                            if len(majors) != len(set(majors)):
+                            # 3. 동일 학과 충돌 (같은 학교 & 같은 학과일 경우에만 카운트)
+                            univ_majors = [(p['재학중인대학'], p.get('학과', '미기재')) for p in table if p.get('학과', '미기재') != '미기재']
+                            if len(univ_majors) != len(set(univ_majors)):
                                 same_major_tables.append(f"{r_idx+1}R {t_idx+1}번")
                                 
                             # 4. 중복 만남 카운트
