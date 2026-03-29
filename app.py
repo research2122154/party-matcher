@@ -370,6 +370,11 @@ if uploaded_file is not None:
             
             st.info(f"🎯 **최종 선발 완료 ({len(sel_df)}명):** 👨 남성 {len(sel_df[sel_df['성별']=='남'])}명 / 👩‍🦰 여성 {len(sel_df[sel_df['성별']=='여'])}명")
             
+            # [조건 1 반영] 최종 확정 명단 하단에 기존/신규 인원 비율 추가
+            crew_sel = len(sel_df[sel_df['참여이력'] == '크루'])
+            new_sel = len(sel_df[sel_df['참여이력'] == '신규'])
+            st.info(f"👥 **참여이력 비율:** 🌟 신규 {new_sel}명 / 🎖️ 기존(크루) {crew_sel}명")
+            
             st.write("### ✅ 최종 참가 확정 명단")
             st.dataframe(sel_df.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore'), hide_index=True, use_container_width=True)
             st.download_button(label="📥 최종 참가자 명단 엑셀 다운로드", data=to_excel(sel_df), file_name='파티_최종참가자명단.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -377,6 +382,12 @@ if uploaded_file is not None:
             if len(wait_df) > 0:
                 st.write("---")
                 st.warning(f"⏳ **대기자 발생 ({len(wait_df)}명)**")
+                
+                # [조건 1 반영] 대기자 명단 하단에 기존/신규 인원 비율 추가
+                crew_wait = len(wait_df[wait_df['참여이력'] == '크루'])
+                new_wait = len(wait_df[wait_df['참여이력'] == '신규'])
+                st.info(f"👥 **대기자 참여이력 비율:** 🌟 신규 {new_wait}명 / 🎖️ 기존(크루) {crew_wait}명")
+                
                 st.write("### ⏳ 대기자 명단 (미선정자)")
                 st.dataframe(wait_df.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore'), hide_index=True, use_container_width=True)
                 st.download_button(label="📥 대기자 명단 엑셀 다운로드", data=to_excel(wait_df), file_name='파티_대기자명단.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -456,10 +467,12 @@ if uploaded_file is not None:
                 st.write("---")
                 st.write("### 📊 자리 배치 품질 검증 리포트")
                 
-                dup_meets = 0
-                dup_meet_details = [] 
-                same_sex_dup_meets = 0
-                same_sex_dup_meet_details = []
+                # [조건 2 반영] 4분할 중복 추적 변수 셋업
+                dup_diff_curr = 0; dup_diff_curr_details = []
+                dup_same_curr = 0; dup_same_curr_details = []
+                dup_diff_past = 0; dup_diff_past_details = []
+                dup_same_past = 0; dup_same_past_details = []
+                
                 skewed_gender_tables = []
                 skewed_univ_tables = []
                 same_major_tables = []
@@ -470,15 +483,24 @@ if uploaded_file is not None:
                 all_met_current_report = set()
                 past_met_pairs_set_report = set(past_met_pairs) if past_met_pairs else set()
                 
+                # 성비 검증을 위한 전체 선발 인원 기준 min/max 재계산
+                total_m_sel = sum(1 for p in sel_list if p['성별'] == '남')
+                total_w_sel = sum(1 for p in sel_list if p['성별'] == '여')
+                min_m_sel = total_m_sel // table_count if table_count else 0
+                max_m_sel = (total_m_sel + table_count - 1) // table_count if table_count else 0
+                min_w_sel = total_w_sel // table_count if table_count else 0
+                max_w_sel = (total_w_sel + table_count - 1) // table_count if table_count else 0
+                
                 total_e_sel = sum(1 for p in sel_list if 'E' in str(p.get('MBTI', '')).upper())
                 min_e_sel = total_e_sel // table_count if table_count else 0
                 max_e_sel = (total_e_sel + table_count - 1) // table_count if table_count else 0
 
                 for r_idx, round_tables in enumerate(all_rounds_data):
                     for t_idx, table in enumerate(round_tables):
+                        # 성비 붕괴 로직 정상화 (수학적 할당량을 벗어난 경우만 체크)
                         m_count = sum(1 for p in table if p['성별'] == '남')
                         w_count = sum(1 for p in table if p['성별'] == '여')
-                        if abs(m_count - w_count) > 1: 
+                        if m_count < min_m_sel or m_count > max_m_sel or w_count < min_w_sel or w_count > max_w_sel:
                             skewed_gender_tables.append(f"{r_idx+1}R {t_idx+1}번")
                             
                         table_capacity = len(table)
@@ -495,30 +517,33 @@ if uploaded_file is not None:
                         if e_count < min_e_sel or e_count > max_e_sel:
                             skewed_mbti_tables.append(f"{r_idx+1}R {t_idx+1}번")
                             
+                        # [조건 2 반영] 4분할 중복 추적 실행
                         for i in range(len(table)):
                             for j in range(i+1, len(table)):
                                 pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
+                                is_diff_sex = (table[i]['성별'] != table[j]['성별'])
                                 
-                                is_current_dup = pair in all_met_current_report
-                                is_past_dup = pair in past_met_pairs_set_report
+                                p1_name = table[i]['이름']
+                                p2_name = table[j]['이름']
+                                detail_str = f"{p1_name} - {p2_name} ({r_idx+1}R {t_idx+1}번)"
                                 
-                                is_error = False
-                                if is_current_dup:
-                                    is_error = True
-                                elif is_past_dup and table[i]['성별'] != table[j]['성별']:
-                                    is_error = True
-                                
-                                if is_error:
-                                    p1_name = table[i]['이름']
-                                    p2_name = table[j]['이름']
-                                    detail_str = f"{p1_name} - {p2_name} ({r_idx+1}R {t_idx+1}번)"
-                                    
-                                    if table[i]['성별'] != table[j]['성별']:
-                                        dup_meets += 1
-                                        dup_meet_details.append(detail_str)
+                                # 당일 중복 처리
+                                if pair in all_met_current_report:
+                                    if is_diff_sex:
+                                        dup_diff_curr += 1
+                                        dup_diff_curr_details.append(detail_str)
                                     else:
-                                        same_sex_dup_meets += 1
-                                        same_sex_dup_meet_details.append(detail_str)
+                                        dup_same_curr += 1
+                                        dup_same_curr_details.append(detail_str)
+                                
+                                # 과거 중복 처리
+                                if pair in past_met_pairs_set_report:
+                                    if is_diff_sex:
+                                        dup_diff_past += 1
+                                        dup_diff_past_details.append(detail_str)
+                                    else:
+                                        dup_same_past += 1
+                                        dup_same_past_details.append(detail_str)
                                         
                                 all_met_current_report.add(pair)
                 
@@ -546,22 +571,26 @@ if uploaded_file is not None:
                         ghost_meets += 1
                         ghost_details.append(f"{person['이름']} ({', '.join(ghost_info)})")
 
-                # [수정 적용] 라벨 텍스트 변경: (당일) 및 (이전)
+                # UI 배치 업데이트
                 col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-                col_r1.metric("🚨 이성 중복 만남(당일)", f"{dup_meets}건")
-                col_r2.metric("⚖️ 성비 불균형", f"{len(skewed_gender_tables)}건")
-                col_r3.metric("🏫 대학 쏠림", f"{len(skewed_univ_tables)}건")
-                col_r4.metric("📚 학과 충돌", f"{len(same_major_tables)}건")
+                col_r1.metric("🚨 이성 중복 만남(당일)", f"{dup_diff_curr}건")
+                col_r2.metric("🚨 동성 중복 만남(당일)", f"{dup_same_curr}건")
+                col_r3.metric("🚨 이성 중복 만남(이전)", f"{dup_diff_past}건")
+                col_r4.metric("🚨 동성 중복 만남(이전)", f"{dup_same_past}건")
                 
-                col_r5, col_r6, col_r7 = st.columns(3)
-                col_r5.metric("💬 MBTI 분산실패", f"{len(skewed_mbti_tables)}건")
-                col_r6.metric("🪑 지박령 발생", f"{ghost_meets}명")
-                col_r7.metric("🚨 동성 중복 만남(이전)", f"{same_sex_dup_meets}건")
+                col_r5, col_r6, col_r7, col_r8, col_r9 = st.columns(5)
+                col_r5.metric("⚖️ 성비 불균형", f"{len(skewed_gender_tables)}건")
+                col_r6.metric("🏫 대학 쏠림", f"{len(skewed_univ_tables)}건")
+                col_r7.metric("📚 학과 충돌", f"{len(same_major_tables)}건")
+                col_r8.metric("💬 MBTI 분산실패", f"{len(skewed_mbti_tables)}건")
+                col_r9.metric("🪑 지박령 발생", f"{ghost_meets}명")
                 
                 with st.expander("🔍 상세 에러 테이블 확인하기 (클릭)"):
-                    st.write(f"- **이성 중복 만남(당일) 발생:** {', '.join(dup_meet_details) if dup_meet_details else '없음 (완벽)'}")
-                    st.write(f"- **동성 중복 만남(이전) 발생:** {', '.join(same_sex_dup_meet_details) if same_sex_dup_meet_details else '없음 (완벽)'}")
-                    st.write(f"- **성비 불균형 (3:1 등):** {', '.join(skewed_gender_tables) if skewed_gender_tables else '없음 (완벽)'}")
+                    st.write(f"- **이성 중복 만남(당일) 발생:** {', '.join(dup_diff_curr_details) if dup_diff_curr_details else '없음 (완벽)'}")
+                    st.write(f"- **동성 중복 만남(당일) 발생:** {', '.join(dup_same_curr_details) if dup_same_curr_details else '없음 (완벽)'}")
+                    st.write(f"- **이성 중복 만남(이전) 발생:** {', '.join(dup_diff_past_details) if dup_diff_past_details else '없음 (완벽)'}")
+                    st.write(f"- **동성 중복 만남(이전) 발생:** {', '.join(dup_same_past_details) if dup_same_past_details else '없음 (완벽)'}")
+                    st.write(f"- **성비 불균형 (예: 4:0 쏠림):** {', '.join(skewed_gender_tables) if skewed_gender_tables else '없음 (완벽)'}")
                     st.write(f"- **대학 쏠림:** {', '.join(skewed_univ_tables) if skewed_univ_tables else '없음 (완벽)'}")
                     st.write(f"- **동일 학과 충돌:** {', '.join(same_major_tables) if same_major_tables else '없음 (완벽)'}")
                     st.write(f"- **MBTI(E) 분산실패:** {', '.join(skewed_mbti_tables) if skewed_mbti_tables else '없음 (완벽)'}")
@@ -610,7 +639,6 @@ if uploaded_file is not None:
                     opp_sex_count = sum(1 for u in met_uids if uid_to_person[u]['성별'] != person['성별'])
                     other_univ_count = sum(1 for u in met_uids if uid_to_person[u]['재학중인대학'] != person['재학중인대학'])
                     
-                    # [수정 적용] MBTI를 포함하여 항상 일정한 컬럼 생성
                     row_data = {
                         "번호": idx + 1,
                         "이름": person['이름'],
