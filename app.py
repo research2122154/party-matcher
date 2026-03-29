@@ -12,7 +12,6 @@ st.set_page_config(page_title="청취담 연합파티 매칭", page_icon="🍻",
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
-# [수정 1] 파일 업로더 강제 초기화를 위한 고유 Key 생성
 if "uploader_key" not in st.session_state:
     st.session_state["uploader_key"] = str(uuid.uuid4())
 
@@ -60,7 +59,6 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
     min_u = {u: count // num_tables for u, count in univ_counts.items()}
     max_u = {u: (count + num_tables - 1) // num_tables if num_tables else 0 for u, count in univ_counts.items()}
 
-    # [수정 2] MBTI (E 성향) 수학적 할당량 계산
     total_e = sum(1 for p in people_list if 'E' in str(p.get('MBTI', '')).upper())
     min_e = total_e // num_tables
     max_e = (total_e + num_tables - 1) // num_tables if num_tables else 0
@@ -130,16 +128,15 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
                         if (temp_univ_counts[curr_u] - 1) >= min_u[curr_u] and unseated_curr_u <= tables_needing_curr_u:
                             p_penalty += 30000
 
-                        # [수정 2] 5순위 MBTI(E 성향) 균등 분산 로직 (15,000점)
                         if 'E' in str(p.get('MBTI', '')).upper():
                             temp_e = sum(1 for x in round_tables[t_idx] if 'E' in str(x.get('MBTI', '')).upper()) + 1
                             if temp_e > max_e: 
-                                p_penalty += 15000  # E가 기준치 이상으로 몰리는 것 방지
+                                p_penalty += 15000 
                                 
                             unseated_e = sum(1 for x in unseated if 'E' in str(x.get('MBTI', '')).upper())
                             tables_needing_e = sum(1 for t in round_tables if sum(1 for x in t if 'E' in str(x.get('MBTI', '')).upper()) < min_e)
                             if (temp_e - 1) >= min_e and unseated_e <= tables_needing_e: 
-                                p_penalty += 15000  # E가 필요한 다른 테이블을 위해 고갈 방지
+                                p_penalty += 15000 
                             
                         if p_penalty < min_p:
                             min_p = p_penalty
@@ -186,7 +183,6 @@ st.write("### 📂 참가자 명단 업로드")
 
 col_u1, col_u2 = st.columns(2)
 with col_u1:
-    # [수정 1] 동적 Key 할당을 통한 완벽한 초기화 대응
     uploaded_file = st.file_uploader("📂 [필수] 이번 파티 전체 신청자 명단 (엑셀/CSV)", type=['xlsx', 'csv'], key=f"file1_{st.session_state['uploader_key']}")
 with col_u2:
     past_waitlist_file = st.file_uploader("📂 [선택] 저번 파티 미선정자/대기자 명단 (우선선발용)", type=['xlsx', 'csv'], key=f"file2_{st.session_state['uploader_key']}")
@@ -203,7 +199,6 @@ if uploaded_file is not None:
         cleaned_columns[col] = clean_name
     df = df.rename(columns=cleaned_columns)
     
-    # [수정 3] 연락처 및 MBTI 동적 인식 추가
     target_keywords = ['이름', '성별', '재학중인대학', '학과', '학년', '참여이력', '신규', '전화번호', '연락처', 'MBTI']
     rename_dict = {}
 
@@ -244,7 +239,6 @@ if uploaded_file is not None:
         else:
             df['참여이력'] = df['참여이력'].astype(str).apply(lambda x: '크루' if '크루' in x or '기존' in x else '신규')
             
-        # [수정 3] 전화번호 및 MBTI 기본값 보정
         has_phone = '전화번호' in df.columns
         if has_phone:
             df['전화번호'] = df['전화번호'].astype(str).replace('nan', '미기재')
@@ -391,7 +385,6 @@ if uploaded_file is not None:
             st.write("### 🔀 2단계: 과거 이력 연동 및 자리 배치 생성")
             st.info("💡 동성 간 중복 만남은 허용하되, 이성 간 중복 만남은 원천 차단하며 N개 대학을 균형 있게 분산합니다.")
             
-            # [수정 1] 과거 시트 파일 업로더 Key 연동
             past_seat_file = st.file_uploader("📂 [선택] 저번 파티 '자리배치 결과표' (과거 중복 만남 원천 차단용)", type=['xlsx', 'csv'], key=f"file3_{st.session_state['uploader_key']}")
 
             if st.button("🚀 2단계: 선발된 참가자로 전체 라운드(1~3) 배치 구동!", use_container_width=True):
@@ -465,10 +458,12 @@ if uploaded_file is not None:
                 
                 dup_meets = 0
                 dup_meet_details = [] 
+                same_sex_dup_meets = 0         # [신규 추가] 동성 중복 횟수
+                same_sex_dup_meet_details = [] # [신규 추가] 동성 중복 상세 (예: 여12 - 여9)
                 skewed_gender_tables = []
                 skewed_univ_tables = []
                 same_major_tables = []
-                skewed_mbti_tables = [] # [수정 2] MBTI 리포트용 추가
+                skewed_mbti_tables = [] 
                 ghost_meets = 0 
                 ghost_details = []
                 
@@ -496,21 +491,28 @@ if uploaded_file is not None:
                         if len(univ_majors) != len(set(univ_majors)):
                             same_major_tables.append(f"{r_idx+1}R {t_idx+1}번")
                             
-                        # [수정 2] MBTI(E 성향) 리포트 검증
                         e_count = sum(1 for p in table if 'E' in str(p.get('MBTI', '')).upper())
                         if e_count < min_e_sel or e_count > max_e_sel:
                             skewed_mbti_tables.append(f"{r_idx+1}R {t_idx+1}번")
                             
+                        # [신규 추가] 동성 중복 만남 분류 및 표기 로직
                         for i in range(len(table)):
                             for j in range(i+1, len(table)):
-                                if table[i]['성별'] != table[j]['성별']:
-                                    pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
-                                    if pair in all_met_current_report or pair in past_met_pairs_set_report:
+                                pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
+                                
+                                if pair in all_met_current_report or pair in past_met_pairs_set_report:
+                                    p1_name = table[i]['이름']
+                                    p2_name = table[j]['이름']
+                                    detail_str = f"{p1_name} - {p2_name} ({r_idx+1}R {t_idx+1}번)"
+                                    
+                                    if table[i]['성별'] != table[j]['성별']:
                                         dup_meets += 1
-                                        p1_name = table[i]['이름']
-                                        p2_name = table[j]['이름']
-                                        dup_meet_details.append(f"{p1_name} & {p2_name} ({r_idx+1}R {t_idx+1}번)")
-                                    all_met_current_report.add(pair)
+                                        dup_meet_details.append(detail_str)
+                                    else:
+                                        same_sex_dup_meets += 1
+                                        same_sex_dup_meet_details.append(detail_str)
+                                        
+                                all_met_current_report.add(pair)
                 
                 for person in sel_list:
                     uid = person['고유ID']
@@ -536,17 +538,21 @@ if uploaded_file is not None:
                         ghost_meets += 1
                         ghost_details.append(f"{person['이름']} ({', '.join(ghost_info)})")
 
-                # [수정 2] MBTI 검증란 추가를 위해 6개 컬럼으로 레이아웃 수정
-                col_r1, col_r2, col_r3, col_r4, col_r5, col_r6 = st.columns(6)
+                # 4/3 배치로 가독성 개선
+                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
                 col_r1.metric("🚨 이성 중복 만남", f"{dup_meets}건")
                 col_r2.metric("⚖️ 성비 불균형", f"{len(skewed_gender_tables)}건")
                 col_r3.metric("🏫 대학 쏠림", f"{len(skewed_univ_tables)}건")
                 col_r4.metric("📚 학과 충돌", f"{len(same_major_tables)}건")
+                
+                col_r5, col_r6, col_r7 = st.columns(3)
                 col_r5.metric("💬 MBTI 분산실패", f"{len(skewed_mbti_tables)}건")
                 col_r6.metric("🪑 지박령 발생", f"{ghost_meets}명")
+                col_r7.metric("🤝 동성 중복(허용)", f"{same_sex_dup_meets}건")
                 
                 with st.expander("🔍 상세 에러 테이블 확인하기 (클릭)"):
                     st.write(f"- **이성 중복 만남 발생:** {', '.join(dup_meet_details) if dup_meet_details else '없음 (완벽)'}")
+                    st.write(f"- **동성 중복 만남 (허용/참고용):** {', '.join(same_sex_dup_meet_details) if same_sex_dup_meet_details else '없음'}")
                     st.write(f"- **성비 불균형 (3:1 등):** {', '.join(skewed_gender_tables) if skewed_gender_tables else '없음 (완벽)'}")
                     st.write(f"- **대학 쏠림:** {', '.join(skewed_univ_tables) if skewed_univ_tables else '없음 (완벽)'}")
                     st.write(f"- **동일 학과 충돌:** {', '.join(same_major_tables) if same_major_tables else '없음 (완벽)'}")
@@ -596,7 +602,6 @@ if uploaded_file is not None:
                     opp_sex_count = sum(1 for u in met_uids if uid_to_person[u]['성별'] != person['성별'])
                     other_univ_count = sum(1 for u in met_uids if uid_to_person[u]['재학중인대학'] != person['재학중인대학'])
                     
-                    # [수정 3] 개인 스케줄표에 전화번호, MBTI 출력 추가 연동
                     row_data = {
                         "번호": idx + 1,
                         "이름": person['이름'],
@@ -637,7 +642,6 @@ if uploaded_file is not None:
                     text_output += f"- 세번째 테이블: {row['3라운드 테이블']}\n\n"
                 st.text_area("아래 내용을 전체 복사하세요.", text_output, height=300)
 
-                # [수정 1] 동적 Key값을 다시 생성하여 완벽하게 리셋
                 st.write("---")
                 if st.button("🔄 전체 데이터 초기화 및 다시 시작하기", type="primary"):
                     for key in list(st.session_state.keys()):
