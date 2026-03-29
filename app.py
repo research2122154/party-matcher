@@ -87,12 +87,14 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
                         p_penalty = 0
                         
                         for seated in round_tables[t_idx]:
-                            if p['성별'] != seated['성별']:
-                                pair = tuple(sorted([p['고유ID'], seated['고유ID']]))
-                                if pair in current_met_pairs:
-                                    p_penalty += 100000 
-                                elif pair in past_met_pairs_set:
-                                    p_penalty += 50000 
+                            pair = tuple(sorted([p['고유ID'], seated['고유ID']]))
+                            
+                            # [핵심 변경] 당일 만남은 동성/이성 무조건 차단 (100,000점)
+                            if pair in current_met_pairs:
+                                p_penalty += 100000 
+                            # 과거 만남은 '이성'일 경우에만 차단 (50,000점)
+                            elif pair in past_met_pairs_set and p['성별'] != seated['성별']:
+                                p_penalty += 50000 
                                     
                             if p.get('학과') and seated.get('학과'):
                                 if p['학과'] != '미기재' and p['재학중인대학'] == seated['재학중인대학'] and p['학과'] == seated['학과']:
@@ -383,7 +385,7 @@ if uploaded_file is not None:
 
             st.write("---")
             st.write("### 🔀 2단계: 과거 이력 연동 및 자리 배치 생성")
-            st.info("💡 동성 간 중복 만남은 허용하되, 이성 간 중복 만남은 원천 차단하며 N개 대학을 균형 있게 분산합니다.")
+            st.info("💡 과거 이성 중복 만남은 원천 차단하며 N개 대학을 균형 있게 분산합니다. (당일 만남은 동성/이성 모두 차단)")
             
             past_seat_file = st.file_uploader("📂 [선택] 저번 파티 '자리배치 결과표' (과거 중복 만남 원천 차단용)", type=['xlsx', 'csv'], key=f"file3_{st.session_state['uploader_key']}")
 
@@ -458,8 +460,8 @@ if uploaded_file is not None:
                 
                 dup_meets = 0
                 dup_meet_details = [] 
-                same_sex_dup_meets = 0         # [신규 추가] 동성 중복 횟수
-                same_sex_dup_meet_details = [] # [신규 추가] 동성 중복 상세 (예: 여12 - 여9)
+                same_sex_dup_meets = 0
+                same_sex_dup_meet_details = []
                 skewed_gender_tables = []
                 skewed_univ_tables = []
                 same_major_tables = []
@@ -495,12 +497,21 @@ if uploaded_file is not None:
                         if e_count < min_e_sel or e_count > max_e_sel:
                             skewed_mbti_tables.append(f"{r_idx+1}R {t_idx+1}번")
                             
-                        # [신규 추가] 동성 중복 만남 분류 및 표기 로직
+                        # [핵심 변경] 당일 만남은 동성/이성 모두 에러로 처리
                         for i in range(len(table)):
                             for j in range(i+1, len(table)):
                                 pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
                                 
-                                if pair in all_met_current_report or pair in past_met_pairs_set_report:
+                                is_current_dup = pair in all_met_current_report
+                                is_past_dup = pair in past_met_pairs_set_report
+                                
+                                is_error = False
+                                if is_current_dup:
+                                    is_error = True
+                                elif is_past_dup and table[i]['성별'] != table[j]['성별']:
+                                    is_error = True
+                                
+                                if is_error:
                                     p1_name = table[i]['이름']
                                     p2_name = table[j]['이름']
                                     detail_str = f"{p1_name} - {p2_name} ({r_idx+1}R {t_idx+1}번)"
@@ -538,7 +549,6 @@ if uploaded_file is not None:
                         ghost_meets += 1
                         ghost_details.append(f"{person['이름']} ({', '.join(ghost_info)})")
 
-                # 4/3 배치로 가독성 개선
                 col_r1, col_r2, col_r3, col_r4 = st.columns(4)
                 col_r1.metric("🚨 이성 중복 만남", f"{dup_meets}건")
                 col_r2.metric("⚖️ 성비 불균형", f"{len(skewed_gender_tables)}건")
@@ -548,11 +558,11 @@ if uploaded_file is not None:
                 col_r5, col_r6, col_r7 = st.columns(3)
                 col_r5.metric("💬 MBTI 분산실패", f"{len(skewed_mbti_tables)}건")
                 col_r6.metric("🪑 지박령 발생", f"{ghost_meets}명")
-                col_r7.metric("🤝 동성 중복(허용)", f"{same_sex_dup_meets}건")
+                col_r7.metric("🚨 동성 중복 만남", f"{same_sex_dup_meets}건")
                 
                 with st.expander("🔍 상세 에러 테이블 확인하기 (클릭)"):
                     st.write(f"- **이성 중복 만남 발생:** {', '.join(dup_meet_details) if dup_meet_details else '없음 (완벽)'}")
-                    st.write(f"- **동성 중복 만남 (허용/참고용):** {', '.join(same_sex_dup_meet_details) if same_sex_dup_meet_details else '없음'}")
+                    st.write(f"- **동성 중복 만남 발생:** {', '.join(same_sex_dup_meet_details) if same_sex_dup_meet_details else '없음 (완벽)'}")
                     st.write(f"- **성비 불균형 (3:1 등):** {', '.join(skewed_gender_tables) if skewed_gender_tables else '없음 (완벽)'}")
                     st.write(f"- **대학 쏠림:** {', '.join(skewed_univ_tables) if skewed_univ_tables else '없음 (완벽)'}")
                     st.write(f"- **동일 학과 충돌:** {', '.join(same_major_tables) if same_major_tables else '없음 (완벽)'}")
