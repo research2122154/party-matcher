@@ -35,8 +35,8 @@ st.sidebar.header("⚙️ 파티 설정")
 party_capacity = st.sidebar.number_input("이번 파티 참가 정원 (명)", min_value=4, value=48, step=1)
 table_count = st.sidebar.number_input("준비된 테이블 개수", min_value=1, value=12, step=1)
 
-# --- 2. 전체 스케줄 생성 알고리즘 (기존 무결점 로직 100% 유지) ---
-def generate_full_schedule(people_list, num_tables, total_rounds=3):
+# --- 2. 전체 스케줄 생성 알고리즘 (N개 대학 동적 분산 및 과거 이력 연동) ---
+def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3):
     n = len(people_list)
     base_size = n // num_tables
     remainder = n % num_tables
@@ -44,24 +44,24 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
 
     total_m = sum(1 for p in people_list if p['성별'] == '남')
     total_w = sum(1 for p in people_list if p['성별'] == '여')
-    total_sch_a = sum(1 for p in people_list if p['소속학교'] == '교통대')
-    total_sch_b = sum(1 for p in people_list if p['소속학교'] == '건국대')
 
     min_w = total_w // num_tables
     max_w = (total_w + num_tables - 1) // num_tables if num_tables else 0
     min_m = total_m // num_tables
     max_m = (total_m + num_tables - 1) // num_tables if num_tables else 0
     
-    min_sch_b = total_sch_b // num_tables
-    max_sch_b = (total_sch_b + num_tables - 1) // num_tables if num_tables else 0
-    min_sch_a = total_sch_a // num_tables
-    max_sch_a = (total_sch_a + num_tables - 1) // num_tables if num_tables else 0
+    # [핵심 1] 동적 N개 대학 자동 인식 및 수학적 할당량 계산
+    unique_univs = set(p['소속학교'] for p in people_list)
+    univ_counts = {u: sum(1 for p in people_list if p['소속학교'] == u) for u in unique_univs}
+    min_u = {u: count // num_tables for u, count in univ_counts.items()}
+    max_u = {u: (count + num_tables - 1) // num_tables if num_tables else 0 for u, count in univ_counts.items()}
 
     best_all_rounds = []
     global_min_penalty = float('inf')
 
     for attempt in range(50): 
-        met_pairs = set()
+        # [핵심 2] 과거 파티에서 만났던 기록을 현재 패널티(met_pairs)에 주입
+        met_pairs = set(past_met_pairs) if past_met_pairs else set()
         person_visited_tables = {p['고유ID']: set() for p in people_list}
         current_all_rounds = []
         total_penalty = 0
@@ -74,85 +74,67 @@ def generate_full_schedule(people_list, num_tables, total_rounds=3):
             for t_idx, t_size in enumerate(table_sizes):
                 for _ in range(t_size):
                     if not unseated: break
-
                     best_person = None
                     min_p = float('inf')
-
                     for p in unseated:
                         p_penalty = 0
-                        
                         for seated in round_tables[t_idx]:
                             pair = tuple(sorted([p['고유ID'], seated['고유ID']]))
-                            if pair in met_pairs:
-                                p_penalty += 10000 
-                                
-                        if t_idx in person_visited_tables[p['고유ID']]:
-                            p_penalty += 8000
-
+                            if pair in met_pairs: p_penalty += 10000 
+                        if t_idx in person_visited_tables[p['고유ID']]: p_penalty += 8000
                         for seated in round_tables[t_idx]:
                             if p.get('학과') and seated.get('학과'):
                                 if p['학과'] != '미기재' and p['소속학교'] == seated['소속학교'] and p['학과'] == seated['학과']:
                                     p_penalty += 20000
-
+                                    
                         temp_w = sum(1 for x in round_tables[t_idx] if x['성별'] == '여') + (1 if p['성별'] == '여' else 0)
                         temp_m = sum(1 for x in round_tables[t_idx] if x['성별'] == '남') + (1 if p['성별'] == '남' else 0)
-                        temp_sch_b = sum(1 for x in round_tables[t_idx] if x['소속학교'] == '건국대') + (1 if p['소속학교'] == '건국대' else 0)
-                        temp_sch_a = sum(1 for x in round_tables[t_idx] if x['소속학교'] == '교통대') + (1 if p['소속학교'] == '교통대' else 0)
+                        
+                        # [핵심 3] 동적 N개 대학 현재 테이블 인원 스캔
+                        temp_univ_counts = {u: sum(1 for x in round_tables[t_idx] if x['소속학교'] == u) for u in unique_univs}
+                        temp_univ_counts[p['소속학교']] += 1
 
                         if temp_w > max_w: p_penalty += 50000
                         if temp_m > max_m: p_penalty += 50000
-                        if temp_sch_b > max_sch_b: p_penalty += 50000
-                        if temp_sch_a > max_sch_a: p_penalty += 50000
-
+                        # N개 대학 정원 통제 적용
+                        for u in unique_univs:
+                            if temp_univ_counts[u] > max_u[u]: p_penalty += 50000
+                            
                         if p['성별'] == '여':
                             unseated_w = sum(1 for x in unseated if x['성별'] == '여')
                             tables_needing_w = sum(1 for t in round_tables if sum(1 for x in t if x['성별'] == '여') < min_w)
-                            if (temp_w - 1) >= min_w and unseated_w <= tables_needing_w:
-                                p_penalty += 50000
-                                
+                            if (temp_w - 1) >= min_w and unseated_w <= tables_needing_w: p_penalty += 50000
                         elif p['성별'] == '남':
                             unseated_m = sum(1 for x in unseated if x['성별'] == '남')
                             tables_needing_m = sum(1 for t in round_tables if sum(1 for x in t if x['성별'] == '남') < min_m)
-                            if (temp_m - 1) >= min_m and unseated_m <= tables_needing_m:
-                                p_penalty += 50000
-
-                        if p['소속학교'] == '건국대':
-                            unseated_sch_b = sum(1 for x in unseated if x['소속학교'] == '건국대')
-                            tables_needing_sch_b = sum(1 for t in round_tables if sum(1 for x in t if x['소속학교'] == '건국대') < min_sch_b)
-                            if (temp_sch_b - 1) >= min_sch_b and unseated_sch_b <= tables_needing_sch_b:
-                                p_penalty += 50000
-                                
-                        elif p['소속학교'] == '교통대':
-                            unseated_sch_a = sum(1 for x in unseated if x['소속학교'] == '교통대')
-                            tables_needing_sch_a = sum(1 for t in round_tables if sum(1 for x in t if x['소속학교'] == '교통대') < min_sch_a)
-                            if (temp_sch_a - 1) >= min_sch_a and unseated_sch_a <= tables_needing_sch_a:
-                                p_penalty += 50000
-
+                            if (temp_m - 1) >= min_m and unseated_m <= tables_needing_m: p_penalty += 50000
+                            
+                        # [핵심 4] N개 대학별 고갈 방지 (Starvation Prevention)
+                        curr_u = p['소속학교']
+                        unseated_curr_u = sum(1 for x in unseated if x['소속학교'] == curr_u)
+                        tables_needing_curr_u = sum(1 for t in round_tables if sum(1 for x in t if x['소속학교'] == curr_u) < min_u[curr_u])
+                        if (temp_univ_counts[curr_u] - 1) >= min_u[curr_u] and unseated_curr_u <= tables_needing_curr_u:
+                            p_penalty += 50000
+                            
                         if p_penalty < min_p:
                             min_p = p_penalty
                             best_person = p
-
+                            
                     if best_person is not None:
                         round_tables[t_idx].append(best_person)
                         unseated.remove(best_person)
                         total_penalty += min_p
                         person_visited_tables[best_person['고유ID']].add(t_idx)
-
             current_all_rounds.append(round_tables)
-
             for table in round_tables:
                 for i in range(len(table)):
                     for j in range(i + 1, len(table)):
                         pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
                         met_pairs.add(pair)
-
         if total_penalty < global_min_penalty:
             global_min_penalty = total_penalty
             best_all_rounds = current_all_rounds
-
-        if global_min_penalty == 0:
-            break
-
+        if global_min_penalty == 0: break
     return best_all_rounds
 
 # --- 3. 메인 화면 ---
@@ -342,21 +324,56 @@ if uploaded_file is not None:
                 st.download_button(label="📥 대기자 명단 엑셀 다운로드", data=to_excel(wait_df), file_name='파티_대기자명단.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
             # ==========================================
-            # [복구 완] 2단계: 자리 배치 및 상세 UI 복구
+            # 2단계: 자리 배치 (과거 이력 연동)
             # ==========================================
             st.write("---")
-            if st.button("🚀 2단계: 선발된 인원으로 전체 라운드(1~3) 자리 배치 생성!", use_container_width=True):
-                with st.spinner('선발된 참가자 명단으로 최적의 동선을 계산 중입니다...'):
+            st.write("### 🔀 2단계: 과거 이력 연동 및 자리 배치 생성")
+            st.info("💡 과거 파티에서 만났던 사람들을 절대 다시 만나지 않도록 방어하고, N개의 대학을 균형 있게 분산합니다.")
+            
+            past_seat_file = st.file_uploader("📂 [선택] 저번 파티 '자리배치 결과표' (과거 중복 만남 원천 차단용)", type=['xlsx', 'csv'])
+
+            if st.button("🚀 2단계: 선발된 참가자로 전체 라운드(1~3) 배치 구동!", use_container_width=True):
+                with st.spinner('수만 가지의 경우의 수를 분석하여 최적의 동선을 계산 중입니다...'):
+                    sel_list = st.session_state['selected_df'].to_dict('records')
                     
-                    people_list = sel_df.to_dict('records')
-                    
-                    # 동명이인 처리를 위한 고유 ID 발급 (선발된 명단 기준)
-                    for idx, p in enumerate(people_list):
+                    # 1. 현재 파티원의 고유 식별 체계 생성
+                    key_to_uid = {}
+                    for idx, p in enumerate(sel_list): 
                         p['고유ID'] = f"{p['이름']}_{idx}"
+                        # 과거 데이터와 대조하기 위한 절대 매칭키
+                        matching_key = f"{p['이름']}_{p['소속학교']}_{p['성별']}"
+                        key_to_uid[matching_key] = p['고유ID']
                         
-                    all_rounds_data = generate_full_schedule(people_list, table_count)
+                    # 2. 과거 파티 자리배치표 파싱 로직
+                    past_met_pairs = set()
+                    if past_seat_file is not None:
+                        try:
+                            df_ps = pd.read_csv(past_seat_file) if past_seat_file.name.endswith('.csv') else pd.read_excel(past_seat_file)
+                            # '라운드' 또는 'R'이 들어간 컬럼을 모두 라운드 정보로 인식
+                            round_cols = [c for c in df_ps.columns if '라운드' in c or 'R' in c]
+                            df_ps['매칭키'] = df_ps['이름'].astype(str) + "_" + df_ps['재학중인대학'].astype(str) + "_" + df_ps['성별'].astype(str)
+                            
+                            for r_col in round_cols:
+                                # 같은 라운드에서 같은 테이블(값)을 가진 사람들끼리 그룹핑
+                                for table_name, group in df_ps.groupby(r_col):
+                                    members = group['매칭키'].dropna().tolist()
+                                    # 테이블 내 모든 인원의 쌍(Pair) 생성
+                                    for i in range(len(members)):
+                                        for j in range(i+1, len(members)):
+                                            p1_key, p2_key = members[i], members[j]
+                                            # 두 명 모두 '이번 파티'에 합격하여 참가한 경우에만 패널티 등록
+                                            if p1_key in key_to_uid and p2_key in key_to_uid:
+                                                past_met_pairs.add(tuple(sorted([key_to_uid[p1_key], key_to_uid[p2_key]])))
+                            
+                            st.success(f"✅ 과거 이력 스캔 성공! 총 {len(past_met_pairs)}개의 '과거 만남 기록'을 이번 파티에서 원천 차단합니다.")
+                        except Exception as e:
+                            st.warning("⚠️ 과거 자리배치표 형식을 인식할 수 없어 중복 만남 방지를 생략합니다.")
                     
+                    # 3. 알고리즘 최종 구동 (과거 만남 기록 주입)
+                    results = generate_full_schedule(sel_list, table_count, past_met_pairs=past_met_pairs)
                     st.success("🎉 파티 전체 스케줄 배치가 완료되었습니다!")
+                    
+                    # (이후 하단 라운드별 표 출력 및 개인별 스케줄 로직은 기존 코드 그대로 유지)
                     
                     st.write("### 🗺️ 라운드별 테이블 배치도 (운영진용)")
                     st.info("아래 각 라운드 탭을 클릭하여 테이블별 착석 인원 정보를 확인하세요.")
