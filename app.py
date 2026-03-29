@@ -35,8 +35,8 @@ st.sidebar.header("⚙️ 파티 설정")
 party_capacity = st.sidebar.number_input("이번 파티 참가 정원 (명)", min_value=4, value=48, step=1)
 table_count = st.sidebar.number_input("준비된 테이블 개수", min_value=1, value=12, step=1)
 
-# --- 2. 전체 스케줄 생성 알고리즘 (N개 대학 동적 분산 및 과거 이력 연동) ---
-def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3):
+# --- 2. 전체 스케줄 생성 알고리즘 (N개 대학 동적 분산, 과거 이력 연동, 조기 종료 및 진행률 UI) ---
+def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3, max_attempts=1000, progress_bar=None, status_text=None):
     n = len(people_list)
     base_size = n // num_tables
     remainder = n % num_tables
@@ -59,7 +59,8 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
     best_all_rounds = []
     global_min_penalty = float('inf')
 
-    for attempt in range(150): 
+    # [수정됨] 50번 고정에서 max_attempts(기본 1000번)로 대폭 상향
+    for attempt in range(max_attempts): 
         # [핵심 2] 과거 파티에서 만났던 기록을 현재 패널티(met_pairs)에 주입
         met_pairs = set(past_met_pairs) if past_met_pairs else set()
         person_visited_tables = {p['고유ID']: set() for p in people_list}
@@ -131,12 +132,26 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
                     for j in range(i + 1, len(table)):
                         pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
                         met_pairs.add(pair)
+                        
         if total_penalty < global_min_penalty:
             global_min_penalty = total_penalty
             best_all_rounds = current_all_rounds
-        if global_min_penalty == 0: break
-    return best_all_rounds
 
+        # [신규 추가] 진행률 애니메이션(UI) 실시간 업데이트
+        if progress_bar and status_text:
+            percent_complete = int(((attempt + 1) / max_attempts) * 100)
+            progress_bar.progress(percent_complete)
+            status_text.markdown(f"**⏳ 완벽한 배치를 찾는 중... (시뮬레이션: {attempt + 1}/{max_attempts}회)** \n👉 현재까지 찾은 가장 완벽한 배치 점수: `{global_min_penalty}`점 (0점이 무결점)")
+
+        # [신규 추가] '조기 종료(Early Stopping)' 로직: 0건이 뜨면 남은 횟수 상관없이 즉시 중단!
+        if global_min_penalty == 0: 
+            if status_text:
+                status_text.success(f"✨ 완벽한 황금 배치(패널티 0점)를 찾아냈습니다! (탐색 {attempt + 1}회 만에 조기 종료 완료)")
+            if progress_bar:
+                progress_bar.progress(100)
+            break
+            
+    return best_all_rounds
 # --- 3. 메인 화면 ---
 st.write("---")
 st.write("### 📂 참가자 명단 업로드")
@@ -347,53 +362,58 @@ if uploaded_file is not None:
             
             past_seat_file = st.file_uploader("📂 [선택] 저번 파티 '자리배치 결과표' (과거 중복 만남 원천 차단용)", type=['xlsx', 'csv'])
 
-            if st.button("🚀 2단계: 선발된 참가자로 전체 라운드(1~3) 배치 구동!", use_container_width=True):
-                with st.spinner('수만 가지의 경우의 수를 분석하여 최적의 동선을 계산 중입니다...'):
-                    sel_list = st.session_state['selected_df'].to_dict('records')
+           if st.button("🚀 2단계: 선발된 참가자로 전체 라운드(1~3) 배치 구동!", use_container_width=True):
+                # 기존의 막연한 spinner를 제거하고 진행률 애니메이션 UI 공간을 할당합니다.
+                status_text = st.empty()
+                progress_bar = st.progress(0)
+                
+                sel_list = st.session_state['selected_df'].to_dict('records')
+                
+                # 1. 현재 파티원의 고유 식별 체계 생성
+                key_to_uid = {}
+                for idx, p in enumerate(sel_list): 
+                    p['고유ID'] = f"{p['이름']}_{idx}"
+                    matching_key = f"{p['이름']}_{p['재학중인대학']}_{p['성별']}"
+                    key_to_uid[matching_key] = p['고유ID']
                     
-                    # 1. 현재 파티원의 고유 식별 체계 생성
-                    key_to_uid = {}
-                    for idx, p in enumerate(sel_list): 
-                        p['고유ID'] = f"{p['이름']}_{idx}"
-                        # 과거 데이터와 대조하기 위한 절대 매칭키
-                        matching_key = f"{p['이름']}_{p['재학중인대학']}_{p['성별']}"
-                        key_to_uid[matching_key] = p['고유ID']
+                # 2. 과거 파티 자리배치표 파싱 로직
+                past_met_pairs = set()
+                if past_seat_file is not None:
+                    try:
+                        df_ps = pd.read_csv(past_seat_file) if past_seat_file.name.endswith('.csv') else pd.read_excel(past_seat_file)
                         
-                    # 2. 과거 파티 자리배치표 파싱 로직
-                    past_met_pairs = set()
-                    if past_seat_file is not None:
-                        try:
-                            df_ps = pd.read_csv(past_seat_file) if past_seat_file.name.endswith('.csv') else pd.read_excel(past_seat_file)
+                        if '학교' in df_ps.columns and '재학중인대학' not in df_ps.columns:
+                            df_ps.rename(columns={'학교': '재학중인대학'}, inplace=True)
+                        elif '소속학교' in df_ps.columns and '재학중인대학' not in df_ps.columns:
+                            df_ps.rename(columns={'소속학교': '재학중인대학'}, inplace=True)
                             
-                            # [오류 방어] '학교'나 '소속학교' 열이 있다면 '재학중인대학'으로 이름 통일
-                            if '학교' in df_ps.columns and '재학중인대학' not in df_ps.columns:
-                                df_ps.rename(columns={'학교': '재학중인대학'}, inplace=True)
-                            elif '소속학교' in df_ps.columns and '재학중인대학' not in df_ps.columns:
-                                df_ps.rename(columns={'소속학교': '재학중인대학'}, inplace=True)
-                                
-                            # '라운드' 또는 'R'이 들어간 컬럼을 모두 라운드 정보로 자동 인식
-                            round_cols = [c for c in df_ps.columns if '라운드' in c or 'R' in c]
-                            df_ps['매칭키'] = df_ps['이름'].astype(str) + "_" + df_ps['재학중인대학'].astype(str) + "_" + df_ps['성별'].astype(str)
-                            
-                            for r_col in round_cols:
-                                # 같은 라운드에서 같은 테이블(값)을 가진 사람들끼리 그룹핑
-                                for table_name, group in df_ps.groupby(r_col):
-                                    members = group['매칭키'].dropna().tolist()
-                                    # 테이블 내 모든 인원의 쌍(Pair) 생성
-                                    for i in range(len(members)):
-                                        for j in range(i+1, len(members)):
-                                            p1_key, p2_key = members[i], members[j]
-                                            # 두 명 모두 '이번 파티'에 합격하여 참가한 경우에만 패널티 등록
-                                            if p1_key in key_to_uid and p2_key in key_to_uid:
-                                                past_met_pairs.add(tuple(sorted([key_to_uid[p1_key], key_to_uid[p2_key]])))
-                            
-                            st.success(f"✅ 과거 이력 스캔 성공! 총 {len(past_met_pairs)}개의 '과거 만남 기록'을 이번 파티에서 원천 차단합니다.")
-                        except Exception as e:
-                            st.warning(f"⚠️ 과거 자리배치표 파싱 오류 (컬럼명을 확인해주세요): {e}")
-                    
-                    # 3. 알고리즘 최종 구동 (과거 만남 기록 주입)
-                    all_rounds_data = generate_full_schedule(sel_list, table_count, past_met_pairs=past_met_pairs)
-                    st.success("🎉 파티 전체 스케줄 배치가 완료되었습니다!")
+                        round_cols = [c for c in df_ps.columns if '라운드' in c or 'R' in c]
+                        df_ps['매칭키'] = df_ps['이름'].astype(str) + "_" + df_ps['재학중인대학'].astype(str) + "_" + df_ps['성별'].astype(str)
+                        
+                        for r_col in round_cols:
+                            for table_name, group in df_ps.groupby(r_col):
+                                members = group['매칭키'].dropna().tolist()
+                                for i in range(len(members)):
+                                    for j in range(i+1, len(members)):
+                                        p1_key, p2_key = members[i], members[j]
+                                        if p1_key in key_to_uid and p2_key in key_to_uid:
+                                            past_met_pairs.add(tuple(sorted([key_to_uid[p1_key], key_to_uid[p2_key]])))
+                        
+                        st.success(f"✅ 과거 이력 스캔 성공! 총 {len(past_met_pairs)}개의 '과거 만남 기록'을 이번 파티에서 원천 차단합니다.")
+                    except Exception as e:
+                        st.warning(f"⚠️ 과거 자리배치표 파싱 오류 (컬럼명을 확인해주세요): {e}")
+                
+                # 3. 알고리즘 최종 구동 (최대 1000번 반복, UI 상태 인자 전달)
+                all_rounds_data = generate_full_schedule(
+                    sel_list, 
+                    table_count, 
+                    past_met_pairs=past_met_pairs,
+                    max_attempts=1000, 
+                    progress_bar=progress_bar, 
+                    status_text=status_text
+                )
+                
+                st.success("🎉 파티 전체 스케줄 배치가 완료되었습니다!")
                     
                    # ==========================================
                     # [신규 추가] 3부: 사후 검증 리포트 및 품질 분석
