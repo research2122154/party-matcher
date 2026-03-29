@@ -402,11 +402,13 @@ if uploaded_file is not None:
                     st.write("### 📊 자리 배치 품질 검증 리포트")
                     
                     dup_meets = 0
+                    dup_meet_tables = [] # [추가됨] 중복 만남이 발생한 테이블을 담을 리스트
                     skewed_gender_tables = []
                     skewed_univ_tables = []
                     same_major_tables = []
                     
-                    all_met = set()
+                    # [수정됨] 과거 파티에서 만났던 기록까지 포함하여 더욱 엄격하게 중복 만남을 색출
+                    all_met = set(past_met_pairs) if past_met_pairs else set()
                     
                     for r_idx, round_tables in enumerate(all_rounds_data):
                         for t_idx, table in enumerate(round_tables):
@@ -428,13 +430,19 @@ if uploaded_file is not None:
                             if len(univ_majors) != len(set(univ_majors)):
                                 same_major_tables.append(f"{r_idx+1}R {t_idx+1}번")
                                 
-                            # 4. 중복 만남 카운트
+                            # 4. 중복 만남 카운트 및 테이블 위치 기록
+                            has_dup_in_this_table = False
                             for i in range(len(table)):
                                 for j in range(i+1, len(table)):
                                     pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
                                     if pair in all_met:
                                         dup_meets += 1
+                                        has_dup_in_this_table = True
                                     all_met.add(pair)
+                                    
+                            # 이 테이블에서 중복이 한 번이라도 발생했다면 리스트에 추가
+                            if has_dup_in_this_table:
+                                dup_meet_tables.append(f"{r_idx+1}R {t_idx+1}번")
                     
                     col_r1, col_r2, col_r3, col_r4 = st.columns(4)
                     col_r1.metric("🚨 중복 만남 횟수", f"{dup_meets}건")
@@ -443,10 +451,11 @@ if uploaded_file is not None:
                     col_r4.metric("📚 동일 학과 충돌", f"{len(same_major_tables)}개")
                     
                     with st.expander("🔍 상세 에러 테이블 확인하기 (클릭)"):
+                        # [추가됨] 중복 만남 테이블 출력 로직
+                        st.write(f"- **중복 만남 발생:** {', '.join(dup_meet_tables) if dup_meet_tables else '없음 (완벽)'}")
                         st.write(f"- **성비 불균형 (3:1 등):** {', '.join(skewed_gender_tables) if skewed_gender_tables else '없음 (완벽)'}")
                         st.write(f"- **대학 쏠림:** {', '.join(skewed_univ_tables) if skewed_univ_tables else '없음 (완벽)'}")
                         st.write(f"- **동일 학과 충돌:** {', '.join(same_major_tables) if same_major_tables else '없음 (완벽)'}")
-
                     # ==========================================
                     # 테이블 배치도 출력
                     # ==========================================
