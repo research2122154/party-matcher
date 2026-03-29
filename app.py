@@ -388,12 +388,65 @@ if uploaded_file is not None:
                     all_rounds_data = generate_full_schedule(sel_list, table_count, past_met_pairs=past_met_pairs)
                     st.success("🎉 파티 전체 스케줄 배치가 완료되었습니다!")
                     
-                    st.write("### 🗺️ 라운드별 테이블 배치도 (운영진용)")
-                    st.info("아래 각 라운드 탭을 클릭하여 테이블별 착석 인원 정보를 확인하세요.")
+                    # ==========================================
+                    # [신규 추가] 3부: 사후 검증 리포트 및 품질 분석
+                    # ==========================================
+                    st.write("---")
+                    st.write("### 📊 자리 배치 품질 검증 리포트")
                     
+                    dup_meets = 0
+                    skewed_gender_tables = []
+                    skewed_univ_tables = []
+                    same_major_tables = []
+                    
+                    all_met = set()
+                    
+                    for r_idx, round_tables in enumerate(all_rounds_data):
+                        for t_idx, table in enumerate(round_tables):
+                            # 1. 성비 불균형 (예: 4명 중 남녀 차이가 2 이상이면 3:1 또는 4:0)
+                            m_count = sum(1 for p in table if p['성별'] == '남')
+                            w_count = sum(1 for p in table if p['성별'] == '여')
+                            if abs(m_count - w_count) > 1: 
+                                skewed_gender_tables.append(f"{r_idx+1}R {t_idx+1}번")
+                                
+                            # 2. 대학 불균형 (특정 대학이 테이블 정원의 절반을 초과할 경우)
+                            table_capacity = len(table)
+                            univ_counts = {}
+                            for p in table: univ_counts[p['재학중인대학']] = univ_counts.get(p['재학중인대학'], 0) + 1
+                            if any(c > (table_capacity // 2 + table_capacity % 2) for c in univ_counts.values()):
+                                skewed_univ_tables.append(f"{r_idx+1}R {t_idx+1}번")
+                                
+                            # 3. 동일 학과 충돌
+                            majors = [p.get('학과', '미기재') for p in table if p.get('학과', '미기재') != '미기재']
+                            if len(majors) != len(set(majors)):
+                                same_major_tables.append(f"{r_idx+1}R {t_idx+1}번")
+                                
+                            # 4. 중복 만남 카운트
+                            for i in range(len(table)):
+                                for j in range(i+1, len(table)):
+                                    pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
+                                    if pair in all_met:
+                                        dup_meets += 1
+                                    all_met.add(pair)
+                    
+                    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+                    col_r1.metric("🚨 중복 만남 횟수", f"{dup_meets}건")
+                    col_r2.metric("⚖️ 성비 불균형 테이블", f"{len(skewed_gender_tables)}개")
+                    col_r3.metric("🏫 대학 쏠림 테이블", f"{len(skewed_univ_tables)}개")
+                    col_r4.metric("📚 동일 학과 충돌", f"{len(same_major_tables)}개")
+                    
+                    with st.expander("🔍 상세 에러 테이블 확인하기 (클릭)"):
+                        st.write(f"- **성비 불균형 (3:1 등):** {', '.join(skewed_gender_tables) if skewed_gender_tables else '없음 (완벽)'}")
+                        st.write(f"- **대학 쏠림:** {', '.join(skewed_univ_tables) if skewed_univ_tables else '없음 (완벽)'}")
+                        st.write(f"- **동일 학과 충돌:** {', '.join(same_major_tables) if same_major_tables else '없음 (완벽)'}")
+
+                    # ==========================================
+                    # 테이블 배치도 출력
+                    # ==========================================
+                    st.write("---")
+                    st.write("### 🗺️ 라운드별 테이블 배치도 (운영진용)")
                     tabs = st.tabs([f"{r + 1}라운드" for r in range(len(all_rounds_data))])
                     
-                    # 출력할 컬럼 동적 설정
                     display_cols = ['이름', '성별', '재학중인대학']
                     if has_dept: display_cols.append('학과')
                     if has_grade: display_cols.append('학년')
@@ -407,44 +460,68 @@ if uploaded_file is not None:
                                 with col:
                                     st.markdown(f"**📍 {t_idx + 1}번 테이블**")
                                     if table:
-                                        table_df = pd.DataFrame(table)[display_cols]
-                                        st.dataframe(table_df, hide_index=True, use_container_width=True)
+                                        st.dataframe(pd.DataFrame(table)[display_cols], hide_index=True, use_container_width=True)
                                     else:
                                         st.write("빈 테이블")
                                     st.write("") 
                     
                     st.write("---")
                     
-                    # 개인별 스케줄 로직
+                    # ==========================================
+                    # [신규 추가] 참가자별 만남 통계 및 개인 스케줄표
+                    # ==========================================
+                    uid_to_person = {p['고유ID']: p for p in sel_list}
+                    personal_stats = {p['고유ID']: {'met_unique': set()} for p in sel_list}
+                    
+                    # 모든 라운드를 순회하며 '내가 만난 유니크한 사람들'의 고유 ID를 수집
+                    for round_tables in all_rounds_data:
+                        for table in round_tables:
+                            for p in table:
+                                for other in table:
+                                    if p['고유ID'] != other['고유ID']:
+                                        personal_stats[p['고유ID']]['met_unique'].add(other['고유ID'])
+                                        
                     schedule_results = []
                     for idx, person in enumerate(sel_list):
-                        name = person['이름']
                         uid = person['고유ID']
+                        
+                        # 개인별 통계 계산 (만난 이성 수, 타대학 인원 수)
+                        met_uids = personal_stats[uid]['met_unique']
+                        opp_sex_count = sum(1 for u in met_uids if uid_to_person[u]['성별'] != person['성별'])
+                        other_univ_count = sum(1 for u in met_uids if uid_to_person[u]['재학중인대학'] != person['재학중인대학'])
+                        
                         row_data = {
                             "번호": idx + 1,
-                            "이름": name, 
+                            "이름": person['이름'], 
                             "성별": person['성별'],
                             "재학중인대학": person['재학중인대학']
                         }
-                        if has_dept:
-                            row_data["학과"] = person['학과']
-                        if has_grade:
-                            row_data["학년"] = person['학년']
+                        if has_dept: row_data["학과"] = person['학과']
+                        if has_grade: row_data["학년"] = person['학년']
                         
                         for r_idx, round_tables in enumerate(all_rounds_data):
                             for t_idx, table in enumerate(round_tables):
                                 if any(p['고유ID'] == uid for p in table):
                                     row_data[f"{r_idx + 1}라운드 테이블"] = f"{t_idx + 1}번"
                                     break
+                                    
+                        # 스케줄표에 통계 데이터 열 추가
+                        row_data["만난 이성(명)"] = opp_sex_count
+                        row_data["만난 타대학(명)"] = other_univ_count
                         
                         schedule_results.append(row_data)
                     
                     result_df = pd.DataFrame(schedule_results)
                     
-                    st.write("### 📋 개인별 파티 스케줄표 (전체 참가자 명단)")
+                    st.write("### 📋 개인별 파티 스케줄표 및 만남 통계")
+                    st.info("💡 모든 참가자가 3라운드 동안 최대로 많은 이성과 타대학 사람을 만났는지 우측 통계 열에서 확인할 수 있습니다.")
                     st.dataframe(result_df, hide_index=True, use_container_width=True)
                     
-                    # 대기자가 존재할 경우 스케줄표 바로 밑에 표로 띄워줌
+                    # 엑셀 다운로드 (최종 스케줄표)
+                    col_dl1, col_dl2 = st.columns(2)
+                    with col_dl1:
+                        st.download_button(label="📥 최종 자리배치표 엑셀 다운로드", data=to_excel(result_df), file_name='파티_최종자리배치표.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    
                     if 'waitlist_df' in st.session_state and len(st.session_state['waitlist_df']) > 0:
                         st.write("### ⏳ 대기자 명단 (미선정자)")
                         display_wait_df = st.session_state['waitlist_df'].drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore')
@@ -452,12 +529,10 @@ if uploaded_file is not None:
                     
                     st.write("---")
                     st.write("### 📝 개별 안내용 텍스트 (복사해서 카톡 전송용)")
-                    
                     text_output = ""
                     for index, row in result_df.iterrows():
                         text_output += f"{row['번호']}. {row['이름']}\n"
                         text_output += f"- 첫번째 테이블: {row['1라운드 테이블']}\n"
                         text_output += f"- 두번째 테이블: {row['2라운드 테이블']}\n"
                         text_output += f"- 세번째 테이블: {row['3라운드 테이블']}\n\n"
-                    
                     st.text_area("아래 내용을 전체 복사하세요.", text_output, height=300)
