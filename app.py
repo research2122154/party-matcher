@@ -36,7 +36,7 @@ party_capacity = st.sidebar.number_input("이번 파티 참가 정원 (명)", mi
 table_count = st.sidebar.number_input("준비된 테이블 개수", min_value=1, value=12, step=1)
 
 # --- 2. 전체 스케줄 생성 알고리즘 ---
-def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3, max_attempts=1000, progress_bar=None, status_text=None):
+def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3, max_attempts=300, progress_bar=None, status_text=None):
     n = len(people_list)
     base_size = n // num_tables
     remainder = n % num_tables
@@ -58,6 +58,7 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
     best_all_rounds = []
     global_min_penalty = float('inf')
 
+    # [수정 2] max_attempts 기본값을 300으로 조정
     for attempt in range(max_attempts): 
         past_met_pairs_set = set(past_met_pairs) if past_met_pairs else set()
         current_met_pairs = set()
@@ -181,13 +182,15 @@ if uploaded_file is not None:
         cleaned_columns[col] = clean_name
     df = df.rename(columns=cleaned_columns)
     
-    target_keywords = ['이름', '성별', '재학중인대학', '학과', '학년', '참여이력', '신규']
+    # [수정 3] '전화번호', '연락처' 인식 키워드 추가
+    target_keywords = ['이름', '성별', '재학중인대학', '학과', '학년', '참여이력', '신규', '전화번호', '연락처']
     rename_dict = {}
 
     for keyword in target_keywords:
         matched_col = next((col for col in df.columns if keyword in str(col)), None)
         if matched_col and matched_col != keyword:
             if keyword == '신규': rename_dict[matched_col] = '참여이력'
+            elif keyword == '연락처': rename_dict[matched_col] = '전화번호'
             else: rename_dict[matched_col] = keyword
             
     if '소속학교' in df.columns and '재학중인대학' not in df.columns: rename_dict['소속학교'] = '재학중인대학'
@@ -218,6 +221,12 @@ if uploaded_file is not None:
             df['참여이력'] = '신규' 
         else:
             df['참여이력'] = df['참여이력'].astype(str).apply(lambda x: '크루' if '크루' in x or '기존' in x else '신규')
+            
+        # [수정 3] 전화번호 컬럼 전처리 (없을 경우 '미기재' 처리)
+        if '전화번호' not in df.columns:
+            df['전화번호'] = '미기재'
+        else:
+            df['전화번호'] = df['전화번호'].astype(str).replace('nan', '미기재')
         
         total_count = len(df)
         total_m_count = len(df[df['성별'] == '남'])
@@ -343,7 +352,8 @@ if uploaded_file is not None:
             st.download_button(label="📥 최종 참가자 명단 엑셀 다운로드", data=to_excel(sel_df), file_name='파티_최종참가자명단.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             
             if len(wait_df) > 0:
-                st.warning(f"⏳ **대기자 발생 ({len(wait_df)}명)** - 아래 버튼을 눌러 대기자 명단을 엑셀로 저장하세요.")
+                st.write("---")
+                st.warning(f"⏳ **대기자 발생 ({len(wait_df)}명)**")
                 st.write("### ⏳ 대기자 명단 (미선정자)")
                 st.dataframe(wait_df.drop(columns=['매칭키', '우선순위', '고유ID'], errors='ignore'), hide_index=True, use_container_width=True)
                 st.download_button(label="📥 대기자 명단 엑셀 다운로드", data=to_excel(wait_df), file_name='파티_대기자명단.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -395,12 +405,11 @@ if uploaded_file is not None:
                     except Exception as e:
                         st.warning(f"⚠️ 과거 자리배치표 파싱 오류 (컬럼명을 확인해주세요): {e}")
                 
-                # [수정 완료] 캐시(session_state)에 저장하여 엑셀 다운로드 시 초기화 방지
                 all_rounds_data, final_score = generate_full_schedule(
                     sel_list, 
                     table_count, 
                     past_met_pairs=past_met_pairs,
-                    max_attempts=1000, 
+                    max_attempts=300, 
                     progress_bar=progress_bar, 
                     status_text=status_text
                 )
@@ -410,20 +419,15 @@ if uploaded_file is not None:
                 st.session_state['past_met_pairs'] = past_met_pairs
                 st.session_state['stage2_done'] = True
 
-            # ==========================================
-            # [수정 완료] 2단계 구동 완료 후 캐시에서 불러오기
-            # ==========================================
             if st.session_state.get('stage2_done', False):
                 all_rounds_data = st.session_state['all_rounds_data']
                 final_score = st.session_state['final_score']
                 past_met_pairs = st.session_state['past_met_pairs']
                 sel_list = st.session_state['selected_df'].to_dict('records')
                 
-                # 고유ID 재부여 (리포트용)
                 for idx, p in enumerate(sel_list): 
                     p['고유ID'] = f"{p['이름']}_{idx}"
 
-                # [수정 완료] 점수 명시
                 st.success(f"🎉 파티 전체 스케줄 배치가 완료되었습니다! (최종 패널티 점수: {final_score}점)")
                     
                 st.write("---")
@@ -468,7 +472,7 @@ if uploaded_file is not None:
                                         dup_meet_details.append(f"{p1_name} & {p2_name} ({r_idx+1}R {t_idx+1}번)")
                                     all_met_current_report.add(pair)
                 
-                # [수정 완료] 지박령(고스트) 계산 로직 추가
+                # [수정 1] 지박령 라운드 및 테이블 위치 추적 상세 로직
                 for person in sel_list:
                     uid = person['고유ID']
                     visited_tables = []
@@ -477,11 +481,22 @@ if uploaded_file is not None:
                             if any(p['고유ID'] == uid for p in table):
                                 visited_tables.append(t_idx)
                                 break
-                    if len(visited_tables) != len(set(visited_tables)):
+                    
+                    table_to_rounds = {}
+                    for r_idx, t_idx in enumerate(visited_tables):
+                        if t_idx not in table_to_rounds:
+                            table_to_rounds[t_idx] = []
+                        table_to_rounds[t_idx].append(str(r_idx + 1))
+                        
+                    ghost_info = []
+                    for t_idx, rounds in table_to_rounds.items():
+                        if len(rounds) > 1:
+                            ghost_info.append(f"{','.join(rounds)}R({t_idx+1}번)")
+                            
+                    if ghost_info:
                         ghost_meets += 1
-                        ghost_details.append(person['이름'])
+                        ghost_details.append(f"{person['이름']} ({', '.join(ghost_info)})")
 
-                # [수정 완료] 5개 열로 리포트 확장
                 col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
                 col_r1.metric("🚨 이성 중복 만남", f"{dup_meets}건")
                 col_r2.metric("⚖️ 성비 불균형", f"{len(skewed_gender_tables)}건")
@@ -538,9 +553,11 @@ if uploaded_file is not None:
                     opp_sex_count = sum(1 for u in met_uids if uid_to_person[u]['성별'] != person['성별'])
                     other_univ_count = sum(1 for u in met_uids if uid_to_person[u]['재학중인대학'] != person['재학중인대학'])
                     
+                    # [수정 3] 개인 스케줄표에 전화번호 출력 추가
                     row_data = {
                         "번호": idx + 1,
-                        "이름": person['이름'], 
+                        "이름": person['이름'],
+                        "전화번호": person['전화번호'],
                         "성별": person['성별'],
                         "재학중인대학": person['재학중인대학']
                     }
@@ -576,9 +593,6 @@ if uploaded_file is not None:
                     text_output += f"- 세번째 테이블: {row['3라운드 테이블']}\n\n"
                 st.text_area("아래 내용을 전체 복사하세요.", text_output, height=300)
 
-                # ==========================================
-                # [수정 완료] 새로고침 (초기화) 버튼 추가
-                # ==========================================
                 st.write("---")
                 if st.button("🔄 전체 데이터 초기화 및 다시 시작하기", type="primary"):
                     for key in list(st.session_state.keys()):
