@@ -53,7 +53,7 @@ def strategic_shuffle(people_list):
     return result
 
 # --- 2. 전체 스케줄 생성 알고리즘 (성능 최적화 반영) ---
-def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3, max_attempts=300, progress_bar=None, status_text=None):
+def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3, max_attempts=1000, progress_bar=None, status_text=None):
     n = len(people_list)
     base_size = n // num_tables
     remainder = n % num_tables
