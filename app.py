@@ -52,7 +52,7 @@ def strategic_shuffle(people_list):
     result.extend(males[len(females):] + females[len(males):])
     return result
 
-# --- 2. 전체 스케줄 생성 알고리즘 (성능 최적화 반영) ---
+# --- 2. 전체 스케줄 생성 알고리즘 (성능 최적화 및 1000회 상향 반영) ---
 def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3, max_attempts=1000, progress_bar=None, status_text=None):
     n = len(people_list)
     base_size = n // num_tables
@@ -101,8 +101,7 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
                 for _ in range(t_size):
                     if not unseated: break
                     
-                    # [핵심 성능 개선] 루프 불변성(Loop Invariants)을 바깥으로 추출 (O(n²) 병목 제거)
-                    # 후보자(unseated)를 순회하기 전, 현재 테이블과 남은 인원의 상태를 1번만 계산합니다.
+                    # 루프 불변성(Loop Invariants) 추출 (O(n²) 병목 제거)
                     current_t_w = sum(1 for x in round_tables[t_idx] if x['성별'] == '여')
                     current_t_m = sum(1 for x in round_tables[t_idx] if x['성별'] == '남')
                     current_t_e = sum(1 for x in round_tables[t_idx] if 'E' in str(x.get('MBTI', '')).upper())
@@ -374,7 +373,7 @@ if uploaded_file is not None:
                 final_selected_df = pd.concat([selected_m, selected_w]).sample(frac=1).reset_index(drop=True)
                 final_waitlist_df = pd.concat([waitlist_m, waitlist_w]).sample(frac=1).reset_index(drop=True)
                 
-                # [핵심 버그 수정] 1단계 선발이 확정된 즉시, DataFrame 자체에 영구적인 고유ID를 각인합니다.
+                # 고유ID 영구 각인
                 final_selected_df['고유ID'] = [f"{row['이름']}_{i}" for i, row in final_selected_df.iterrows()]
                 
                 st.session_state['selected_df'] = final_selected_df
@@ -423,7 +422,6 @@ if uploaded_file is not None:
                 status_text = st.empty()
                 progress_bar = st.progress(0)
                 
-                # to_dict를 호출해도 이제 원본 DataFrame에 박힌 '고유ID'를 그대로 가져옵니다.
                 sel_list = st.session_state['selected_df'].to_dict('records')
                 
                 key_to_uid = {}
@@ -460,12 +458,12 @@ if uploaded_file is not None:
                     except Exception as e:
                         st.warning(f"⚠️ 과거 자리배치표 파싱 오류 (컬럼명을 확인해주세요): {e}")
                 
-                # 알고리즘 최종 구동
+                # [수정 완료] 호출부에도 max_attempts=1000을 명시적으로 적용
                 all_rounds_data, final_score = generate_full_schedule(
                     sel_list, 
                     table_count, 
                     past_met_pairs=past_met_pairs,
-                    max_attempts=300, 
+                    max_attempts=1000, 
                     progress_bar=progress_bar, 
                     status_text=status_text
                 )
