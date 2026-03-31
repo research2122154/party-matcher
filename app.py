@@ -7,6 +7,36 @@ import uuid
 st.set_page_config(page_title="청취담 연합파티 매칭", page_icon="🍻", layout="wide")
 
 # ==========================================
+# [신규 탑재] 스마트 헤더 자동 탐색 (Garbage Rows 무시)
+# ==========================================
+def auto_find_header(df):
+    def has_required_cols(cols):
+        # 컬럼이나 행(row) 값들을 하나의 문자열로 합쳐서 핵심 키워드 검사
+        cols_str = "".join(str(c).replace(' ', '') for c in cols)
+        return '이름' in cols_str and '성별' in cols_str
+
+    # 1. 이미 첫 줄이 정상 헤더라면 그대로 반환
+    if has_required_cols(df.columns):
+        return df
+        
+    # 2. 첫 줄이 아니라면, 아래로 내려가며 진짜 헤더(행)를 찾음
+    header_idx = -1
+    for i, row in df.iterrows():
+        if has_required_cols(row.values):
+            header_idx = i
+            break
+            
+    # 3. 진짜 헤더를 찾았다면 그 윗줄(메모, 빈칸 등)은 다 날려버리고 새로 세팅
+    if header_idx != -1:
+        df.columns = df.iloc[header_idx]
+        df = df[header_idx + 1:].reset_index(drop=True)
+        # NaN 컬럼명 방어
+        df.columns = [str(c) if pd.notna(c) else f"Unnamed_{i}" for i, c in enumerate(df.columns)]
+        
+    return df
+# ==========================================
+
+# ==========================================
 # [보안] 관리자 로그인 시스템 및 캐시 키 초기화
 # ==========================================
 if "authenticated" not in st.session_state:
@@ -52,7 +82,7 @@ def strategic_shuffle(people_list):
     result.extend(males[len(females):] + females[len(males):])
     return result
 
-# --- 2. 전체 스케줄 생성 알고리즘 (성능 최적화 및 1000회 상향 반영) ---
+# --- 2. 전체 스케줄 생성 알고리즘 (성능 최적화 반영) ---
 def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3, max_attempts=1000, progress_bar=None, status_text=None):
     n = len(people_list)
     base_size = n // num_tables
@@ -222,6 +252,9 @@ if uploaded_file is not None:
     else:
         df = pd.read_excel(uploaded_file)
         
+    # [스마트 헤더 적용] 윗줄 메모/쓰레기 데이터 제거
+    df = auto_find_header(df)
+        
     cleaned_columns = {}
     for col in df.columns:
         clean_name = str(col).replace('(*)', '').replace(' ', '').strip()
@@ -246,7 +279,7 @@ if uploaded_file is not None:
         df = df.rename(columns=rename_dict)
 
     if not {'이름', '성별', '재학중인대학'}.issubset(df.columns):
-        st.error("⚠️ 파일 첫 줄에 최소한 '이름', '성별', '재학중인대학' (또는 소속학교/학교) 관련 단어가 포함되어 있는지 확인해주세요!")
+        st.error("⚠️ 파일에 '이름', '성별', '재학중인대학' (또는 소속학교/학교) 관련 단어가 포함되어 있는지 확인해주세요!")
     else:
         df['성별'] = df['성별'].astype(str).apply(lambda x: '남' if '남' in x else ('여' if '여' in x else x))
         df['재학중인대학'] = df['재학중인대학'].astype(str).apply(lambda x: '교통대' if '교통' in x else ('건국대' if '건국' in x else x))
@@ -297,6 +330,9 @@ if uploaded_file is not None:
             if past_waitlist_file.name.endswith('.csv'): df_past = pd.read_csv(past_waitlist_file)
             else: df_past = pd.read_excel(past_waitlist_file)
             try:
+                # [스마트 헤더 적용] 대기자 명단도 쓰레기 데이터 제거
+                df_past = auto_find_header(df_past)
+                
                 cleaned_past_cols = {col: str(col).replace('(*)', '').replace(' ', '').strip() for col in df_past.columns}
                 df_past = df_past.rename(columns=cleaned_past_cols)
 
@@ -373,7 +409,6 @@ if uploaded_file is not None:
                 final_selected_df = pd.concat([selected_m, selected_w]).sample(frac=1).reset_index(drop=True)
                 final_waitlist_df = pd.concat([waitlist_m, waitlist_w]).sample(frac=1).reset_index(drop=True)
                 
-                # 고유ID 영구 각인
                 final_selected_df['고유ID'] = [f"{row['이름']}_{i}" for i, row in final_selected_df.iterrows()]
                 
                 st.session_state['selected_df'] = final_selected_df
@@ -434,6 +469,9 @@ if uploaded_file is not None:
                     try:
                         df_ps = pd.read_csv(past_seat_file) if past_seat_file.name.endswith('.csv') else pd.read_excel(past_seat_file)
                         
+                        # [스마트 헤더 적용] 과거 자리배치표도 쓰레기 데이터 제거
+                        df_ps = auto_find_header(df_ps)
+                        
                         cleaned_past_cols_ps = {col: str(col).replace('(*)', '').replace(' ', '').strip() for col in df_ps.columns}
                         df_ps = df_ps.rename(columns=cleaned_past_cols_ps)
 
@@ -458,7 +496,6 @@ if uploaded_file is not None:
                     except Exception as e:
                         st.warning(f"⚠️ 과거 자리배치표 파싱 오류 (컬럼명을 확인해주세요): {e}")
                 
-                # [수정 완료] 호출부에도 max_attempts=1000을 명시적으로 적용
                 all_rounds_data, final_score = generate_full_schedule(
                     sel_list, 
                     table_count, 
