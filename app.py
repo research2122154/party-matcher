@@ -7,7 +7,7 @@ import uuid
 st.set_page_config(page_title="청취담 연합파티 매칭", page_icon="🍻", layout="wide")
 
 # ==========================================
-# [데이터 정규화 함수] 성별 & 대학 쓰레기값 방어
+# [데이터 정규화 함수] 성별, 대학, 학년 쓰레기값 방어
 # ==========================================
 def normalize_gender(x):
     x = str(x).strip().lower()
@@ -21,6 +21,10 @@ def normalize_univ(x):
     if '교통' in x: return '교통대'
     if '건국' in x: return '건국대'
     return x # N개 대학 동적 분산을 위해 타 대학(충북대 등)은 이름 그대로 유지
+
+def normalize_grade(x):
+    x = str(x).strip().replace('학년', '').replace('년', '').strip()
+    return x if x not in ['', 'nan', 'None'] else '미기재'
 
 # ==========================================
 # [스마트 헤더 자동 탐색] Garbage Rows 무시 (인덱스 버그 수정)
@@ -290,7 +294,7 @@ if uploaded_file is not None:
         df = df.dropna(subset=['이름'])
         df = df[df['이름'].astype(str).str.strip() != '']
         
-        # [신규 탑재] 성별 & 대학 스마트 정규화 및 에러 알림
+        # 성별 & 대학 스마트 정규화 및 에러 알림
         df['성별'] = df['성별'].apply(normalize_gender)
         df_invalid_g = df[df['성별'] == '미기재']
         if len(df_invalid_g) > 0:
@@ -308,7 +312,7 @@ if uploaded_file is not None:
         else: df['학과'] = '미기재'
             
         has_grade = '학년' in df.columns
-        if has_grade: df['학년'] = df['학년'].astype(str).replace('nan', '미기재')
+        if has_grade: df['학년'] = df['학년'].apply(normalize_grade)
         else: df['학년'] = '미기재'
             
         if '참여이력' not in df.columns: df['참여이력'] = '신규' 
@@ -362,11 +366,11 @@ if uploaded_file is not None:
                 if '소속학교' in df_past.columns and '재학중인대학' not in df_past.columns: df_past.rename(columns={'소속학교': '재학중인대학'}, inplace=True)
                 if '학교' in df_past.columns and '재학중인대학' not in df_past.columns: df_past.rename(columns={'학교': '재학중인대학'}, inplace=True)
                 
-                # 과거 대기자 명단에도 성별/대학 정규화 적용 (미기재 탈락 처리)
-                if '성별' in df_past.columns:
-                    df_past['성별'] = df_past['성별'].apply(normalize_gender)
-                if '재학중인대학' in df_past.columns:
-                    df_past['재학중인대학'] = df_past['재학중인대학'].apply(normalize_univ)
+                # 과거 대기자 명단에도 성별/대학/학년 정규화 적용 
+                if '성별' in df_past.columns: df_past['성별'] = df_past['성별'].apply(normalize_gender)
+                if '재학중인대학' in df_past.columns: df_past['재학중인대학'] = df_past['재학중인대학'].apply(normalize_univ)
+                if '학년' in df_past.columns: df_past['학년'] = df_past['학년'].apply(normalize_grade)
+                
                 df_past = df_past[(df_past['성별'].isin(['남', '여'])) & (df_past['재학중인대학'] != '미기재')]
                 
                 df_past['매칭키'] = df_past['이름'].astype(str) + df_past['성별'].astype(str) + df_past['재학중인대학'].astype(str)
@@ -550,11 +554,9 @@ if uploaded_file is not None:
                         elif '소속학교' in df_ps.columns and '재학중인대학' not in df_ps.columns:
                             df_ps.rename(columns={'소속학교': '재학중인대학'}, inplace=True)
                             
-                        # 과거 배치표도 성별/대학 정규화 적용 
-                        if '성별' in df_ps.columns:
-                            df_ps['성별'] = df_ps['성별'].apply(normalize_gender)
-                        if '재학중인대학' in df_ps.columns:
-                            df_ps['재학중인대학'] = df_ps['재학중인대학'].apply(normalize_univ)
+                        if '성별' in df_ps.columns: df_ps['성별'] = df_ps['성별'].apply(normalize_gender)
+                        if '재학중인대학' in df_ps.columns: df_ps['재학중인대학'] = df_ps['재학중인대학'].apply(normalize_univ)
+                        if '학년' in df_ps.columns: df_ps['학년'] = df_ps['학년'].apply(normalize_grade)
                             
                         round_cols = [c for c in df_ps.columns if '라운드' in c or 'R' in c]
                         df_ps['매칭키'] = df_ps['이름'].astype(str) + "_" + df_ps['재학중인대학'].astype(str) + "_" + df_ps['성별'].astype(str)
