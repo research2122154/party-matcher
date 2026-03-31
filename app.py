@@ -39,7 +39,20 @@ st.sidebar.header("⚙️ 파티 설정")
 party_capacity = st.sidebar.number_input("이번 파티 참가 정원 (명)", min_value=4, value=48, step=1)
 table_count = st.sidebar.number_input("준비된 테이블 개수", min_value=1, value=12, step=1)
 
-# --- 2. 전체 스케줄 생성 알고리즘 ---
+# --- 전략적 셔플 (Strategic Shuffle) 함수 ---
+def strategic_shuffle(people_list):
+    males = [p for p in people_list if p['성별'] == '남']
+    females = [p for p in people_list if p['성별'] == '여']
+    random.shuffle(males)
+    random.shuffle(females)
+    
+    result = []
+    for m, f in zip(males, females):
+        result.extend([m, f])
+    result.extend(males[len(females):] + females[len(males):])
+    return result
+
+# --- 2. 전체 스케줄 생성 알고리즘 (성능 최적화 반영) ---
 def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_rounds=3, max_attempts=300, progress_bar=None, status_text=None):
     n = len(people_list)
     base_size = n // num_tables
@@ -66,77 +79,92 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
     best_all_rounds = []
     global_min_penalty = float('inf')
 
+    # 과거 이력 인접 리스트(Adjacency Dict) 사전 구축
+    past_adj = {p['고유ID']: set() for p in people_list}
+    if past_met_pairs:
+        for p1, p2 in past_met_pairs:
+            if p1 in past_adj and p2 in past_adj:
+                past_adj[p1].add(p2)
+                past_adj[p2].add(p1)
+
     for attempt in range(max_attempts): 
-        past_met_pairs_set = set(past_met_pairs) if past_met_pairs else set()
-        current_met_pairs = set()
+        current_adj = {p['고유ID']: set() for p in people_list}
         person_visited_tables = {p['고유ID']: set() for p in people_list}
         current_all_rounds = []
         total_penalty = 0
 
         for r in range(total_rounds):
-            unseated = people_list.copy()
-            random.shuffle(unseated)
+            unseated = strategic_shuffle(people_list.copy())
             round_tables = [[] for _ in range(num_tables)]
 
             for t_idx, t_size in enumerate(table_sizes):
                 for _ in range(t_size):
                     if not unseated: break
+                    
+                    # [핵심 성능 개선] 루프 불변성(Loop Invariants)을 바깥으로 추출 (O(n²) 병목 제거)
+                    # 후보자(unseated)를 순회하기 전, 현재 테이블과 남은 인원의 상태를 1번만 계산합니다.
+                    current_t_w = sum(1 for x in round_tables[t_idx] if x['성별'] == '여')
+                    current_t_m = sum(1 for x in round_tables[t_idx] if x['성별'] == '남')
+                    current_t_e = sum(1 for x in round_tables[t_idx] if 'E' in str(x.get('MBTI', '')).upper())
+                    current_t_univs = {u: sum(1 for x in round_tables[t_idx] if x['재학중인대학'] == u) for u in unique_univs}
+                    
+                    unseated_w = sum(1 for x in unseated if x['성별'] == '여')
+                    unseated_m = sum(1 for x in unseated if x['성별'] == '남')
+                    unseated_e = sum(1 for x in unseated if 'E' in str(x.get('MBTI', '')).upper())
+                    unseated_univs = {u: sum(1 for x in unseated if x['재학중인대학'] == u) for u in unique_univs}
+                    
+                    tables_needing_w = sum(1 for t in round_tables if sum(1 for x in t if x['성별'] == '여') < min_w)
+                    tables_needing_m = sum(1 for t in round_tables if sum(1 for x in t if x['성별'] == '남') < min_m)
+                    tables_needing_e = sum(1 for t in round_tables if sum(1 for x in t if 'E' in str(x.get('MBTI', '')).upper()) < min_e)
+                    tables_needing_univs = {u: sum(1 for t in round_tables if sum(1 for x in t if x['재학중인대학'] == u) < min_u[u]) for u in unique_univs}
+
                     best_person = None
                     min_p = float('inf')
+                    
                     for p in unseated:
                         p_penalty = 0
+                        p_uid = p['고유ID']
+                        p_sex = p['성별']
+                        p_univ = p['재학중인대학']
+                        p_mbti_is_e = 'E' in str(p.get('MBTI', '')).upper()
                         
                         for seated in round_tables[t_idx]:
-                            pair = tuple(sorted([p['고유ID'], seated['고유ID']]))
+                            s_uid = seated['고유ID']
                             
-                            if pair in current_met_pairs:
+                            # 인접 리스트 활용 O(1) 탐색
+                            if s_uid in current_adj[p_uid]:
                                 p_penalty += 100000 
-                            elif pair in past_met_pairs_set and p['성별'] != seated['성별']:
+                            elif s_uid in past_adj[p_uid] and p_sex != seated['성별']:
                                 p_penalty += 50000 
                                     
                             if p.get('학과') and seated.get('학과'):
-                                if p['학과'] != '미기재' and p['재학중인대학'] == seated['재학중인대학'] and p['학과'] == seated['학과']:
+                                if p['학과'] != '미기재' and p_univ == seated['재학중인대학'] and p['학과'] == seated['학과']:
                                     p_penalty += 20000
                                     
-                        if t_idx in person_visited_tables[p['고유ID']]: 
+                        if t_idx in person_visited_tables[p_uid]: 
                             p_penalty += 8000
                             
-                        temp_w = sum(1 for x in round_tables[t_idx] if x['성별'] == '여') + (1 if p['성별'] == '여' else 0)
-                        temp_m = sum(1 for x in round_tables[t_idx] if x['성별'] == '남') + (1 if p['성별'] == '남' else 0)
-                        
-                        temp_univ_counts = {u: sum(1 for x in round_tables[t_idx] if x['재학중인대학'] == u) for u in unique_univs}
-                        temp_univ_counts[p['재학중인대학']] += 1
+                        # 미리 계산해둔 값에 +1만 하여 연산 부하 극소화
+                        temp_w = current_t_w + (1 if p_sex == '여' else 0)
+                        temp_m = current_t_m + (1 if p_sex == '남' else 0)
+                        temp_u_count = current_t_univs[p_univ] + 1
 
                         if temp_w > max_w: p_penalty += 100000
                         if temp_m > max_m: p_penalty += 100000
                         
-                        if p['성별'] == '여':
-                            unseated_w = sum(1 for x in unseated if x['성별'] == '여')
-                            tables_needing_w = sum(1 for t in round_tables if sum(1 for x in t if x['성별'] == '여') < min_w)
+                        if p_sex == '여':
                             if (temp_w - 1) >= min_w and unseated_w <= tables_needing_w: p_penalty += 100000
-                        elif p['성별'] == '남':
-                            unseated_m = sum(1 for x in unseated if x['성별'] == '남')
-                            tables_needing_m = sum(1 for t in round_tables if sum(1 for x in t if x['성별'] == '남') < min_m)
+                        elif p_sex == '남':
                             if (temp_m - 1) >= min_m and unseated_m <= tables_needing_m: p_penalty += 100000
                             
-                        for u in unique_univs:
-                            if temp_univ_counts[u] > max_u[u]: p_penalty += 30000
-                            
-                        curr_u = p['재학중인대학']
-                        unseated_curr_u = sum(1 for x in unseated if x['재학중인대학'] == curr_u)
-                        tables_needing_curr_u = sum(1 for t in round_tables if sum(1 for x in t if x['재학중인대학'] == curr_u) < min_u[curr_u])
-                        if (temp_univ_counts[curr_u] - 1) >= min_u[curr_u] and unseated_curr_u <= tables_needing_curr_u:
+                        if temp_u_count > max_u[p_univ]: p_penalty += 30000
+                        if (temp_u_count - 1) >= min_u[p_univ] and unseated_univs[p_univ] <= tables_needing_univs[p_univ]:
                             p_penalty += 30000
 
-                        if 'E' in str(p.get('MBTI', '')).upper():
-                            temp_e = sum(1 for x in round_tables[t_idx] if 'E' in str(x.get('MBTI', '')).upper()) + 1
-                            if temp_e > max_e: 
-                                p_penalty += 15000 
-                                
-                            unseated_e = sum(1 for x in unseated if 'E' in str(x.get('MBTI', '')).upper())
-                            tables_needing_e = sum(1 for t in round_tables if sum(1 for x in t if 'E' in str(x.get('MBTI', '')).upper()) < min_e)
-                            if (temp_e - 1) >= min_e and unseated_e <= tables_needing_e: 
-                                p_penalty += 15000 
+                        if p_mbti_is_e:
+                            temp_e = current_t_e + 1
+                            if temp_e > max_e: p_penalty += 15000 
+                            if (temp_e - 1) >= min_e and unseated_e <= tables_needing_e: p_penalty += 15000 
                             
                         if p_penalty < min_p:
                             min_p = p_penalty
@@ -150,11 +178,13 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
                         
             current_all_rounds.append(round_tables)
             
+            # 라운드 종료 후 인접 리스트(당일 만남) 갱신
             for table in round_tables:
                 for i in range(len(table)):
                     for j in range(i + 1, len(table)):
-                        pair = tuple(sorted([table[i]['고유ID'], table[j]['고유ID']]))
-                        current_met_pairs.add(pair)
+                        u1, u2 = table[i]['고유ID'], table[j]['고유ID']
+                        current_adj[u1].add(u2)
+                        current_adj[u2].add(u1)
                         
         if total_penalty < global_min_penalty:
             global_min_penalty = total_penalty
@@ -163,7 +193,7 @@ def generate_full_schedule(people_list, num_tables, past_met_pairs=None, total_r
         if progress_bar and status_text:
             percent_complete = int(((attempt + 1) / max_attempts) * 100)
             progress_bar.progress(percent_complete)
-            status_text.markdown(f"**⏳ 완벽한 배치를 찾는 중... (시뮬레이션: {attempt + 1}/{max_attempts}회)** \n👉 현재까지 찾은 가장 완벽한 배치 점수: `{global_min_penalty}`점 (0점이 무결점)")
+            status_text.markdown(f"**⏳ 지능적 셔플을 통한 최적 해 탐색 중... (시뮬레이션: {attempt + 1}/{max_attempts}회)** \n👉 현재 최저 패널티: `{global_min_penalty}`점 (0점이 무결점)")
 
         if global_min_penalty == 0: 
             if status_text:
@@ -205,7 +235,6 @@ if uploaded_file is not None:
     for keyword in target_keywords:
         matched_col = next((col for col in df.columns if keyword.lower() in str(col).lower()), None)
         if matched_col:
-            # [수정] 연락처나 신규 등의 키워드는 원래 이름과 같아도 무조건 표준이름으로 변경하도록 로직 강화
             if keyword == '신규': rename_dict[matched_col] = '참여이력'
             elif keyword == '연락처': rename_dict[matched_col] = '전화번호'
             elif keyword.lower() == 'mbti': rename_dict[matched_col] = 'MBTI'
@@ -224,33 +253,23 @@ if uploaded_file is not None:
         df['재학중인대학'] = df['재학중인대학'].astype(str).apply(lambda x: '교통대' if '교통' in x else ('건국대' if '건국' in x else x))
         
         has_dept = '학과' in df.columns
-        if has_dept:
-            df['학과'] = df['학과'].fillna('미기재')
-        else:
-            df['학과'] = '미기재'
+        if has_dept: df['학과'] = df['학과'].fillna('미기재')
+        else: df['학과'] = '미기재'
             
         has_grade = '학년' in df.columns
-        if has_grade:
-            df['학년'] = df['학년'].astype(str).replace('nan', '미기재')
-        else:
-            df['학년'] = '미기재'
+        if has_grade: df['학년'] = df['학년'].astype(str).replace('nan', '미기재')
+        else: df['학년'] = '미기재'
             
-        if '참여이력' not in df.columns:
-            df['참여이력'] = '신규' 
-        else:
-            df['참여이력'] = df['참여이력'].astype(str).apply(lambda x: '크루' if '크루' in x or '기존' in x else '신규')
+        if '참여이력' not in df.columns: df['참여이력'] = '신규' 
+        else: df['참여이력'] = df['참여이력'].astype(str).apply(lambda x: '크루' if '크루' in x or '기존' in x else '신규')
             
         has_phone = '전화번호' in df.columns
-        if has_phone:
-            df['전화번호'] = df['전화번호'].astype(str).replace('nan', '미기재')
-        else:
-            df['전화번호'] = '미기재'
+        if has_phone: df['전화번호'] = df['전화번호'].astype(str).replace('nan', '미기재')
+        else: df['전화번호'] = '미기재'
             
         has_mbti = 'MBTI' in df.columns
-        if has_mbti:
-            df['MBTI'] = df['MBTI'].astype(str).replace('nan', '미기재')
-        else:
-            df['MBTI'] = '미기재'
+        if has_mbti: df['MBTI'] = df['MBTI'].astype(str).replace('nan', '미기재')
+        else: df['MBTI'] = '미기재'
         
         total_count = len(df)
         total_m_count = len(df[df['성별'] == '남'])
@@ -355,6 +374,9 @@ if uploaded_file is not None:
                 final_selected_df = pd.concat([selected_m, selected_w]).sample(frac=1).reset_index(drop=True)
                 final_waitlist_df = pd.concat([waitlist_m, waitlist_w]).sample(frac=1).reset_index(drop=True)
                 
+                # [핵심 버그 수정] 1단계 선발이 확정된 즉시, DataFrame 자체에 영구적인 고유ID를 각인합니다.
+                final_selected_df['고유ID'] = [f"{row['이름']}_{i}" for i, row in final_selected_df.iterrows()]
+                
                 st.session_state['selected_df'] = final_selected_df
                 st.session_state['waitlist_df'] = final_waitlist_df
                 st.success("🎉 참가자 선발 및 대기자 추출이 완료되었습니다! 아래 결과를 확인해주세요.")
@@ -401,11 +423,11 @@ if uploaded_file is not None:
                 status_text = st.empty()
                 progress_bar = st.progress(0)
                 
+                # to_dict를 호출해도 이제 원본 DataFrame에 박힌 '고유ID'를 그대로 가져옵니다.
                 sel_list = st.session_state['selected_df'].to_dict('records')
                 
                 key_to_uid = {}
-                for idx, p in enumerate(sel_list): 
-                    p['고유ID'] = f"{p['이름']}_{idx}"
+                for p in sel_list: 
                     matching_key = f"{p['이름']}_{p['재학중인대학']}_{p['성별']}"
                     key_to_uid[matching_key] = p['고유ID']
                     
@@ -438,6 +460,7 @@ if uploaded_file is not None:
                     except Exception as e:
                         st.warning(f"⚠️ 과거 자리배치표 파싱 오류 (컬럼명을 확인해주세요): {e}")
                 
+                # 알고리즘 최종 구동
                 all_rounds_data, final_score = generate_full_schedule(
                     sel_list, 
                     table_count, 
@@ -457,9 +480,6 @@ if uploaded_file is not None:
                 final_score = st.session_state['final_score']
                 past_met_pairs = st.session_state['past_met_pairs']
                 sel_list = st.session_state['selected_df'].to_dict('records')
-                
-                for idx, p in enumerate(sel_list): 
-                    p['고유ID'] = f"{p['이름']}_{idx}"
 
                 st.success(f"🎉 파티 전체 스케줄 배치가 완료되었습니다! (최종 패널티 점수: {final_score}점)")
                     
@@ -475,6 +495,8 @@ if uploaded_file is not None:
                 skewed_univ_tables = []
                 same_major_tables = []
                 skewed_mbti_tables = [] 
+                underfilled_tables = []
+                
                 ghost_meets = 0 
                 ghost_details = []
                 
@@ -492,8 +514,14 @@ if uploaded_file is not None:
                 min_e_sel = total_e_sel // table_count if table_count else 0
                 max_e_sel = (total_e_sel + table_count - 1) // table_count if table_count else 0
 
+                base_table_size = len(sel_list) // table_count if table_count else 0
+
                 for r_idx, round_tables in enumerate(all_rounds_data):
                     for t_idx, table in enumerate(round_tables):
+                        
+                        if len(table) < base_table_size:
+                            underfilled_tables.append(f"{r_idx+1}R {t_idx+1}번 (현재 {len(table)}명)")
+
                         m_count = sum(1 for p in table if p['성별'] == '남')
                         w_count = sum(1 for p in table if p['성별'] == '여')
                         if m_count < min_m_sel or m_count > max_m_sel or w_count < min_w_sel or w_count > max_w_sel:
@@ -587,6 +615,8 @@ if uploaded_file is not None:
                     st.write(f"- **동일 학과 충돌:** {', '.join(same_major_tables) if same_major_tables else '없음 (완벽)'}")
                     st.write(f"- **MBTI(E) 분산실패:** {', '.join(skewed_mbti_tables) if skewed_mbti_tables else '없음 (완벽)'}")
                     st.write(f"- **지박령(동일 테이블 연속):** {', '.join(ghost_details) if ghost_details else '없음 (완벽)'}")
+                    if underfilled_tables:
+                        st.error(f"⚠️ **인원 미달 테이블 발생:** {', '.join(underfilled_tables)} (조건 충돌로 인한 강제 중단)")
 
                 st.write("---")
                 st.write("### 🗺️ 라운드별 테이블 배치도 (운영진용)")
